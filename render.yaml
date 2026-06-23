@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: awesome-geogebra-ai
+    runtime: node
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: USE_MOCK_AI
+        value: "0"
