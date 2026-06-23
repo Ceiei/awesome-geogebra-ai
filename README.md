@@ -52,16 +52,16 @@ npm run dev
 
 ## 公开部署
 
-本项目包含 Express 后端，因此不能只使用 GitHub Pages。推荐部署到 Render 的 Web Service：
+本项目包含 API 接口，因此不能只使用 GitHub Pages。当前已适配 Vercel：Vite 负责构建前端，`api/[...path].js` 负责 Vercel Serverless Function。
 
 1. 将代码推送到 GitHub 仓库。
-2. 在 [Render Dashboard](https://dashboard.render.com/) 选择 `New > Blueprint`，连接该仓库。
-3. Render 会读取根目录的 `render.yaml`，执行 `npm ci && npm run build`，再以 `npm start` 启动服务。
-4. 部署成功后，Render 会提供一个 `https://<service>.onrender.com` 公开地址；每次推送主分支会自动重新部署。
+2. 打开 [Vercel New Project](https://vercel.com/new)，导入 GitHub 仓库。
+3. 保持默认设置：Build Command 为 `npm run build`，Output Directory 为 `dist`。
+4. 点击 Deploy。完成后会获得一个 `https://<project>.vercel.app` 公开地址；后续推送主分支会自动部署。
 
-默认情况下，公开网站要求每个访问者在页面中输入自己的模型 API Key；浏览器只会在本机保存该 Key，并在请求时发送给服务端转发到所选模型平台。不要在 Render 环境变量或 Git 仓库中填写个人 API Key，除非你已经为访问控制、配额和滥用风险做好了服务端保护。
+默认情况下，公开网站要求每个访问者在页面中输入自己的模型 API Key；浏览器只会在本机保存该 Key，并在请求时发送给服务端转发到所选模型平台。不要在 Vercel 环境变量或 Git 仓库中填写个人 API Key，除非你已经为访问控制、配额和滥用风险做好了服务端保护。
 
-Render 的 Web Service 支持 Node/Express，并可从 GitHub 分支自动构建和部署；服务必须监听平台提供的 `PORT`，本项目已支持这一方式。[Render Web Services 文档](https://render.com/docs/web-services)
+Vercel Hobby 适合非商业个人项目；免费层包含 Serverless Function 调用额度，但受到套餐限制。[Vercel Hobby 文档](https://vercel.com/docs/plans/hobby)
 
 ## 测试
 
