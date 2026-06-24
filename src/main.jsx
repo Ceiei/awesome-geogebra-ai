@@ -20,6 +20,9 @@ import {
   ZoomIn,
   ZoomOut
 } from "lucide-react";
+import { executeGgbCommand, get3DCoordinateSystem } from "./ggbExecutor.js";
+import { createHistoryCacheKey, findHistoryCacheHit } from "./historyCache.js";
+import { enhanceSolidGeometryCommands } from "../shared/solidGeometryEnhancer.js";
 import "./styles.css";
 
 const HISTORY_KEY = "ggb-ai-history-v1";
@@ -44,9 +47,9 @@ const providerPresets = [
     id: "aliyun",
     name: "阿里云百炼",
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    model: "qwen-plus",
+    model: "qwen3-vl-plus",
     apiKeyUrl: "https://bailian.console.aliyun.com/",
-    note: "图片题请改用视觉模型，例如 qwen-vl-plus。"
+    note: "默认使用支持图片理解的视觉模型 qwen3-vl-plus。"
   },
   {
     id: "deepseek",
@@ -258,40 +261,62 @@ function GeoGebraCanvas({ result, renderRequest }) {
 
     const api = appletRef.current;
     const nextCommandResults = [];
+    let objectNames = [];
+    let repaintingPaused = false;
 
     try {
-      api.setErrorDialogsActive(false);
       api.setRepaintingActive(false);
+      repaintingPaused = true;
+      api.setErrorDialogsActive(false);
       api.newConstruction();
-      try {
-        api.setPerspective(viewMode === "3d" ? "3D" : "G");
-      } catch {
-        // The 3D applet opens in its 3D view by default when perspective control is unavailable.
-      }
-      api.setCoordSystem(
-        result.viewport.xmin,
-        result.viewport.xmax,
-        result.viewport.ymin,
-        result.viewport.ymax
-      );
 
-      for (const command of result.ggbCommands) {
-        let ok = false;
+      if (viewMode !== "3d") api.setPerspective?.("G");
+
+      if (viewMode === "3d") {
         try {
-          ok = Boolean(api.evalCommand(command));
+          api.setCoordSystem(...get3DCoordinateSystem(result.viewport));
         } catch {
-          ok = false;
+          // Continue with GeoGebra's default 3D view when a build does not expose the 3D overload.
         }
-        nextCommandResults.push({ command, ok });
+        try {
+          api.setAxesVisible?.(3, true, true, true);
+          api.setGridVisible?.(3, true);
+        } catch {
+          // Axis and grid styling must not prevent the construction from rendering.
+        }
+      } else {
+        api.setCoordSystem(
+          result.viewport.xmin,
+          result.viewport.xmax,
+          result.viewport.ymin,
+          result.viewport.ymax
+        );
       }
 
-      api.setRepaintingActive(true);
-      api.refreshViews();
+      const commandsToRender = enhanceSolidGeometryCommands({
+        mathType: result.mathType,
+        commands: result.ggbCommands
+      });
+      for (const command of commandsToRender) {
+        nextCommandResults.push(executeGgbCommand(api, command));
+      }
+
+      objectNames = typeof api.getAllObjectNames === "function" ? api.getAllObjectNames() : [];
+      for (const objectName of objectNames) {
+        api.setVisible?.(objectName, true);
+      }
       setCommandResults(nextCommandResults);
-      setStatus("已绘制");
+      setStatus(objectNames.length || nextCommandResults.some((item) => item.ok) ? "已绘制" : "未生成可见对象");
     } catch (error) {
       setStatus(error.message || "GeoGebra 绘制失败");
       setCommandResults(nextCommandResults);
+    } finally {
+      try {
+        if (repaintingPaused) api.setRepaintingActive(true);
+        api.refreshViews();
+      } catch {
+        // Do not overwrite a more specific drawing status when the final refresh is unavailable.
+      }
     }
   }, [renderRequest, result, viewMode, appletReadyVersion]);
 
@@ -532,14 +557,29 @@ function ApiKeySettings() {
   );
 }
 
-function InputPanel({ onSolved, activeText, setActiveText }) {
+async function createImageFingerprint(file) {
+  if (!file) return "";
+
+  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function InputPanel({ onSolved, onReuseHistory, history, activeText, setActiveText }) {
   const [image, setImage] = useState(null);
   const [imagePreview, setImagePreview] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  useEffect(() => {
+    return () => {
+      if (imagePreview) URL.revokeObjectURL(imagePreview);
+    };
+  }, [imagePreview]);
 
   function handleImage(file) {
     setError("");
+    setNotice("");
     if (!file) return;
     if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
       setError("仅支持 PNG、JPEG 和 WebP 图片。");
@@ -553,21 +593,70 @@ function InputPanel({ onSolved, activeText, setActiveText }) {
     setImagePreview(URL.createObjectURL(file));
   }
 
+  function handleTextPaste(event) {
+    const imageItem = Array.from(event.clipboardData?.items || []).find((item) => item.type.startsWith("image/"));
+    const pastedImage = imageItem?.getAsFile();
+
+    if (!pastedImage) return;
+
+    event.preventDefault();
+    handleImage(pastedImage);
+  }
+
+  function clearImage() {
+    setImage(null);
+    setImagePreview("");
+  }
+
+  function getVisionModelError() {
+    if (!image) return "";
+
+    const model = readApiSettings().model.trim().toLowerCase();
+    const textOnlyModels = new Set([
+      "qwen-plus",
+      "deepseek-chat",
+      "deepseek-reasoner",
+      "moonshot-v1-8k",
+      "minimax-text-01",
+      "qwen/qwen2.5-7b-instruct",
+      "glm-4-plus"
+    ]);
+
+    return textOnlyModels.has(model)
+      ? `当前模型“${model}”不支持图片理解。请在 API 设置中换用视觉模型后重试。`
+      : "";
+  }
+
   async function submitProblem(event) {
     event.preventDefault();
     setError("");
+    setNotice("");
 
     if (!activeText.trim() && !image) {
       setError("请输入题目文字或上传题目图片。");
       return;
     }
 
-    const form = new FormData();
-    form.append("text", activeText);
-    if (image) form.append("image", image);
+    const visionModelError = getVisionModelError();
+    if (visionModelError) {
+      setError(visionModelError);
+      return;
+    }
 
     setIsSubmitting(true);
     try {
+      const imageFingerprint = await createImageFingerprint(image);
+      const cacheKey = createHistoryCacheKey({ text: activeText, imageFingerprint });
+      const cachedItem = findHistoryCacheHit(history, cacheKey, { text: activeText, hasImage: Boolean(image) });
+      if (cachedItem) {
+        onReuseHistory(cachedItem);
+        setNotice("已读取本地历史解析结果，未重复调用模型。");
+        return;
+      }
+
+      const form = new FormData();
+      form.append("text", activeText);
+      if (image) form.append("image", image);
       const apiSettings = readApiSettings();
       const headers = {};
       if (apiSettings.apiKey) headers["X-OpenAI-API-Key"] = apiSettings.apiKey;
@@ -581,7 +670,9 @@ function InputPanel({ onSolved, activeText, setActiveText }) {
       onSolved(payload, {
         promptText: activeText,
         imageName: image?.name || null,
-        imagePreview
+        imagePreview,
+        imageFingerprint,
+        cacheKey
       });
     } catch (requestError) {
       setError(requestError.message);
@@ -611,8 +702,10 @@ function InputPanel({ onSolved, activeText, setActiveText }) {
           id="problem-text"
           value={activeText}
           onChange={(event) => setActiveText(event.target.value)}
-          placeholder="输入或粘贴几何、函数、解析几何题目..."
+          onPaste={handleTextPaste}
+          placeholder="输入文字，或直接粘贴题目图片..."
         />
+        <p className="paste-hint">支持直接粘贴 PNG、JPEG 或 WebP 题目图片</p>
 
         <div className="example-list">
           {examples.slice(0, 2).map((example) => (
@@ -638,10 +731,7 @@ function InputPanel({ onSolved, activeText, setActiveText }) {
             <button
               type="button"
               className="icon-button preview-remove"
-              onClick={() => {
-                setImage(null);
-                setImagePreview("");
-              }}
+              onClick={clearImage}
               title="移除图片"
             >
               <X size={16} />
@@ -655,6 +745,8 @@ function InputPanel({ onSolved, activeText, setActiveText }) {
             <span>{error}</span>
           </div>
         ) : null}
+
+        {notice ? <div className="success-box"><CheckCircle2 size={16} /><span>{notice}</span></div> : null}
 
         <button className="primary-button" type="submit" disabled={isSubmitting}>
           {isSubmitting ? <Loader2 className="spin" size={18} /> : <ChevronRight size={18} />}
@@ -840,7 +932,13 @@ function App() {
 
   return (
     <main className="app-shell">
-      <InputPanel activeText={activeText} setActiveText={setActiveText} onSolved={handleSolved} />
+      <InputPanel
+        activeText={activeText}
+        setActiveText={setActiveText}
+        history={history}
+        onSolved={handleSolved}
+        onReuseHistory={selectHistory}
+      />
       <PreviewPanel
         result={latestResult}
         history={history}

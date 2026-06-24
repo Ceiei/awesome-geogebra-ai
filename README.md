@@ -1,15 +1,22 @@
 # GeoGebra + AI 智能绘图
 
-这是一个 Web MVP：用户输入文字题目或上传题目图片后，后端调用 AI 理解题意并生成经过校验的 GeoGebra 绘图方案。前端会先展示 AI 对题目的理解、构造步骤和命令列表，用户确认后再绘制到嵌入式 GeoGebra 画布中。
+这是一个将 AI 题意理解与 GeoGebra 交互式绘图结合的 Web 应用。输入文字题目或上传题目图片后，AI 会生成可检查的绘图方案和 GeoGebra 命令；确认后即可在画布中绘制、拖动和编辑图形，支持平面几何、函数、解析几何与基础立体几何。
 
-## 安装
+## 在线体验
+
+正式网站：[https://awesome-geogebra-ai.vercel.app/](https://awesome-geogebra-ai.vercel.app/)
+
+打开网站后，点击“请设置 API KEY”，选择模型供应商并填入自己的 API Key；输入题目或上传图片，待 AI 生成方案后点击“绘制”即可。API Key 仅保存在当前浏览器本机。
+
+## 快速开始
 
 ```bash
 npm install
 cp .env.example .env
+npm run dev
 ```
 
-如需调用真实 AI，可以在网页左侧设置用户自己的 API Key；它只保存在当前浏览器本机，并在解析题目时发送给本机后端。也可以在 `.env` 中设置 `OPENAI_API_KEY` 作为默认后端 Key。
+打开 `http://localhost:5173/`。如需调用真实 AI，可在网页中设置自己的 API Key，或在 `.env` 中设置 `OPENAI_API_KEY` 作为默认后端 Key。
 
 ## API Key 和模型供应商
 
@@ -18,7 +25,7 @@ cp .env.example .env
 | 平台 | Base URL | 默认模型示例 | 获取 API Key |
 | --- | --- | --- | --- |
 | OpenAI 官方 | 留空 | 留空或 OpenAI 模型名 | https://platform.openai.com/api-keys |
-| 阿里云百炼 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus`，图片题可用 `qwen-vl-plus` | https://bailian.console.aliyun.com/ |
+| 阿里云百炼 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen3-vl-plus`（支持图片理解） | https://bailian.console.aliyun.com/ |
 | DeepSeek | `https://api.deepseek.com` | `deepseek-chat` | https://platform.deepseek.com/api_keys |
 | 火山方舟 | `https://ark.cn-beijing.volces.com/api/v3` | `doubao-seed-1-6-250615` 或控制台接入点名 | https://console.volcengine.com/ark/ |
 | 腾讯混元 | `https://api.hunyuan.cloud.tencent.com/v1` | `hunyuan-turbos-latest` | https://console.cloud.tencent.com/hunyuan |
@@ -57,7 +64,7 @@ npm run dev
 1. 将代码推送到 GitHub 仓库。
 2. 打开 [Vercel New Project](https://vercel.com/new)，导入 GitHub 仓库。
 3. 保持默认设置：Build Command 为 `npm run build`，Output Directory 为 `dist`。
-4. 点击 Deploy。完成后会获得一个 `https://<project>.vercel.app` 公开地址；后续推送主分支会自动部署。
+4. 点击 Deploy。当前正式入口为 [https://awesome-geogebra-ai.vercel.app/](https://awesome-geogebra-ai.vercel.app/)；后续推送 `main` 分支会自动部署到该网址。
 
 默认情况下，公开网站要求每个访问者在页面中输入自己的模型 API Key；浏览器只会在本机保存该 Key，并在请求时发送给服务端转发到所选模型平台。不要在 Vercel 环境变量或 Git 仓库中填写个人 API Key，除非你已经为访问控制、配额和滥用风险做好了服务端保护。
 

@@ -8,7 +8,7 @@ export const providerPresets = [
     id: "aliyun",
     name: "阿里云百炼",
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    defaultModel: "qwen-plus",
+    defaultModel: "qwen3-vl-plus",
     allowedHosts: ["dashscope.aliyuncs.com", "dashscope-us.aliyuncs.com"]
   },
   {
@@ -92,6 +92,9 @@ function buildSystemPrompt() {
     "Use Simplified Chinese for user-facing fields: problemSummary, constructionSteps, warnings, and followupQuestion.",
     "Target 2D geometry, functions, analytic geometry, and solid geometry in GeoGebra 3D. For solid geometry, use true 3D point coordinates such as A=(0,0,0) and safe commands such as Segment, Polygon, Prism, Pyramid, Cube, Sphere, Cylinder, Cone, Plane, and Tetrahedron.",
     "Use English GeoGebra command names.",
+    "Use parentheses (...) for GeoGebra command calls, never square brackets. Define every referenced object before it is used; for example, create dist=Distance(D, plane) before Text(\"距离 = \" + dist, (3,3,2)).",
+    "For the angle between a line and a plane in 3D, use Angle(Line(D,E), plane) after defining the plane. Do not use a separately constructed normal vector or Angle(Vector(...), Vector(...)) for this purpose.",
+    "For a prism or polyhedron, explicitly draw every edge with named Segment commands before adding auxiliary planes. Use an infinite Plane only for calculations, then hide it. For a visible auxiliary plane, draw the corresponding finite Polygon face with filling at most 0.06 so it cannot obscure the solid. Do not add SetLabelMode, Text, or decorative commands unless they are essential to the requested visualization.",
     "Do not generate JavaScript, HTML, scripts, buttons, file operations, or destructive commands.",
     "Prefer clear free points and construction objects that remain draggable in GeoGebra.",
     `Allowed GeoGebra command names: ${allowedCommandsForPrompt.join(", ")}.`,

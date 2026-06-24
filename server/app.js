@@ -16,7 +16,7 @@ export function createApp() {
   const app = express();
 
   app.get("/api/health", (_req, res) => {
-    res.json({ ok: true });
+    res.json({ ok: true, validatorVersion: "2026-06-23-parameter-assignments" });
   });
 
   app.post("/api/solve", upload.single("image"), async (req, res, next) => {

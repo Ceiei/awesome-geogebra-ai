@@ -630,7 +630,8 @@ pre {
 }
 
 .warning-box,
-.error-box {
+.error-box,
+.success-box {
   display: flex;
   gap: 10px;
   border-radius: 8px;
@@ -649,6 +650,12 @@ pre {
   border: 1px solid #fecdca;
   background: #fff1f3;
   color: var(--danger);
+}
+
+.success-box {
+  border: 1px solid #abefc6;
+  background: #ecfdf3;
+  color: var(--success);
 }
 
 .rejected-block p {
@@ -938,6 +945,13 @@ textarea {
   font-size: 13px;
   line-height: 1.6;
   text-wrap: pretty;
+}
+
+.paste-hint {
+  margin: -5px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .example-list {

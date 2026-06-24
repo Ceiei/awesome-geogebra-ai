@@ -5,11 +5,19 @@ describe("GeoGebra command validation", () => {
   it("allows MVP construction commands and simple assignments", () => {
     expect(validateGgbCommand("A=(-3,0)").ok).toBe(true);
     expect(validateGgbCommand("P=(0,0,3)").ok).toBe(true);
+    expect(validateGgbCommand("a=2").ok).toBe(true);
+    expect(validateGgbCommand("b=2*sqrt(2)").ok).toBe(true);
+    expect(validateGgbCommand("A=(2*sqrt(2), 0, 0)").ok).toBe(true);
+    expect(validateGgbCommand("B=(a/2, cos(45°), pi)").ok).toBe(true);
     expect(validateGgbCommand("f(x)=x^2-3*x+2").ok).toBe(true);
     expect(validateGgbCommand("l=AngleBisector(A,C,B)").ok).toBe(true);
     expect(validateGgbCommand("Prism(Polygon(A,B,C,D), 4)").ok).toBe(true);
     expect(validateGgbCommand("Sphere(P, 3)").ok).toBe(true);
     expect(validateGgbCommand("SetColor(l, 220, 38, 38)").ok).toBe(true);
+    expect(validateGgbCommand('Text["距离 = " + dist, (3, 3, 2)]')).toEqual({
+      ok: true,
+      command: 'Text("距离 = " + dist, (3, 3, 2))'
+    });
   });
 
   it("rejects unsupported or script-like commands", () => {
@@ -17,6 +25,9 @@ describe("GeoGebra command validation", () => {
     expect(validateGgbCommand("RunClickScript(A, \"alert(1)\")").ok).toBe(false);
     expect(validateGgbCommand("Button(\"go\")").ok).toBe(false);
     expect(validateGgbCommand("A=(0,0); Delete(A)").ok).toBe(false);
+    expect(validateGgbCommand("A=(Execute(\"Delete(A)\"),0,0)").ok).toBe(false);
+    expect(validateGgbCommand("A=(UnknownCommand(1),0,0)").ok).toBe(false);
+    expect(validateGgbCommand("unsafe=RunClickScript(A, \"x\")").ok).toBe(false);
   });
 
   it("deduplicates accepted commands and reports rejected ones", () => {

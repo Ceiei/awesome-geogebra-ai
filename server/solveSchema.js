@@ -1,4 +1,5 @@
 import { normalizeViewport, validateGgbCommands } from "./ggbValidation.js";
+import { enhanceSolidGeometryCommands } from "../shared/solidGeometryEnhancer.js";
 
 export const solveJsonSchema = {
   name: "geogebra_construction_plan",
@@ -50,13 +51,15 @@ export const solveJsonSchema = {
 
 export function normalizeSolveResult(raw) {
   const result = raw && typeof raw === "object" ? raw : {};
-  const { validCommands, rejectedCommands } = validateGgbCommands(result.ggbCommands);
+  const mathType = ["geometry", "function", "analytic_geometry", "solid_geometry"].includes(result.mathType)
+    ? result.mathType
+    : "geometry";
+  const enhancedCommands = enhanceSolidGeometryCommands({ mathType, commands: result.ggbCommands });
+  const { validCommands, rejectedCommands } = validateGgbCommands(enhancedCommands);
 
   return {
     problemSummary: String(result.problemSummary ?? "").trim(),
-    mathType: ["geometry", "function", "analytic_geometry", "solid_geometry"].includes(result.mathType)
-      ? result.mathType
-      : "geometry",
+    mathType,
     constructionSteps: Array.isArray(result.constructionSteps)
       ? result.constructionSteps.map((step) => String(step).trim()).filter(Boolean)
       : [],

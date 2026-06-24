@@ -1,6 +1,23 @@
 const MAX_COMMAND_LENGTH = 420;
 const MAX_COMMANDS = 80;
 const LABEL_PATTERN = /^[A-Za-z][A-Za-z0-9_]*$/;
+const COORDINATE_EXPRESSION_PATTERN = /^[0-9A-Za-z_+\-*/^().\sπ°]+$/;
+const allowedCoordinateFunctions = new Set([
+  "abs",
+  "acos",
+  "asin",
+  "atan",
+  "ceil",
+  "cos",
+  "exp",
+  "floor",
+  "ln",
+  "log",
+  "round",
+  "sin",
+  "sqrt",
+  "tan"
+]);
 
 const allowedCommandNames = new Set([
   "Angle",
@@ -50,6 +67,7 @@ const allowedStyleCommands = new Set([
   "SetLineThickness",
   "SetPointSize",
   "SetPointStyle",
+  "SetVisible",
   "ShowLabel"
 ]);
 
@@ -82,6 +100,16 @@ function stripInlineComment(command) {
   return command.replace(/^\s*\/\/.*$/, "").trim();
 }
 
+function normalizeOuterCommandBrackets(command) {
+  const openingBracket = command.indexOf("[");
+  if (openingBracket < 0 || !command.endsWith("]")) return command;
+
+  const prefix = command.slice(0, openingBracket).trim();
+  if (!/(?:^|=)\s*[A-Za-z][A-Za-z0-9_]*$/.test(prefix)) return command;
+
+  return `${command.slice(0, openingBracket)}(${command.slice(openingBracket + 1, -1)})`;
+}
+
 function getCommandCallName(command) {
   const assignmentMatch = command.match(/^\s*(?:[A-Za-z][A-Za-z0-9_]*\s*=\s*)?([A-Za-z][A-Za-z0-9_]*)\s*(?:\(|\[)/);
   return assignmentMatch?.[1] ?? null;
@@ -92,8 +120,54 @@ function isAssignment(command) {
   return Boolean(match && LABEL_PATTERN.test(match[1]));
 }
 
+function splitTopLevelArguments(source) {
+  const argumentsList = [];
+  let depth = 0;
+  let start = 0;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+    if (character === "(") depth += 1;
+    if (character === ")") depth -= 1;
+    if (depth < 0) return null;
+
+    if (character === "," && depth === 0) {
+      argumentsList.push(source.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+
+  if (depth !== 0) return null;
+  argumentsList.push(source.slice(start).trim());
+  return argumentsList;
+}
+
+function isSafeCoordinateExpression(expression) {
+  if (!expression || !COORDINATE_EXPRESSION_PATTERN.test(expression)) return false;
+
+  const functionNames = expression.matchAll(/([A-Za-z][A-Za-z0-9_]*)\s*\(/g);
+  for (const match of functionNames) {
+    if (!allowedCoordinateFunctions.has(match[1].toLowerCase())) return false;
+  }
+
+  return true;
+}
+
+function looksLikeNumericAssignment(command) {
+  const match = command.match(/^\s*([A-Za-z][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$/);
+  return Boolean(match && LABEL_PATTERN.test(match[1]) && isSafeCoordinateExpression(match[2]));
+}
+
 function looksLikePointAssignment(command) {
-  return /^\s*[A-Za-z][A-Za-z0-9_]*\s*=\s*\(\s*-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?(?:\s*,\s*-?\d+(?:\.\d+)?)?\s*\)\s*$/.test(command);
+  const match = command.match(/^\s*([A-Za-z][A-Za-z0-9_]*)\s*=\s*\((.*)\)\s*$/);
+  if (!match || !LABEL_PATTERN.test(match[1])) return false;
+
+  const coordinates = splitTopLevelArguments(match[2]);
+  return Boolean(
+    coordinates
+      && (coordinates.length === 2 || coordinates.length === 3)
+      && coordinates.every(isSafeCoordinateExpression)
+  );
 }
 
 function looksLikeFunctionAssignment(command) {
@@ -101,7 +175,7 @@ function looksLikeFunctionAssignment(command) {
 }
 
 export function validateGgbCommand(command) {
-  const normalized = stripInlineComment(String(command ?? ""));
+  const normalized = normalizeOuterCommandBrackets(stripInlineComment(String(command ?? "")));
 
   if (!normalized) {
     return { ok: false, command: normalized, reason: "空命令" };
@@ -123,7 +197,7 @@ export function validateGgbCommand(command) {
     return { ok: false, command: normalized, reason: "命令包含不支持的标点符号" };
   }
 
-  if (looksLikePointAssignment(normalized) || looksLikeFunctionAssignment(normalized)) {
+  if (looksLikePointAssignment(normalized) || looksLikeNumericAssignment(normalized) || looksLikeFunctionAssignment(normalized)) {
     return { ok: true, command: normalized };
   }
 

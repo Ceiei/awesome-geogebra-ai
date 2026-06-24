@@ -7,6 +7,6 @@ describe("Vercel API adapter", () => {
     const response = await request(handler).get("/health");
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ ok: true });
+    expect(response.body).toMatchObject({ ok: true, validatorVersion: expect.any(String) });
   });
 });
