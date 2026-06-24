@@ -1,95 +1,44 @@
 # GeoGebra + AI 智能绘图
 
-这是一个将 AI 题意理解与 GeoGebra 交互式绘图结合的 Web 应用。输入文字题目或上传题目图片后，AI 会生成可检查的绘图方案和 GeoGebra 命令；确认后即可在画布中绘制、拖动和编辑图形，支持平面几何、函数、解析几何与基础立体几何。
+一个将 AI 题意理解与 GeoGebra 交互式绘图结合的在线工具。输入数学题文字或上传题图后，AI 会生成绘图方案与 GeoGebra 图形；图形可在画布中继续拖动、缩放和编辑。
 
-## 在线体验
+## 网站入口
 
-正式网站：[https://awesome-geogebra-ai.vercel.app/](https://awesome-geogebra-ai.vercel.app/)
+直接打开正式网站：[https://awesome-geogebra-ai.vercel.app/](https://awesome-geogebra-ai.vercel.app/)
 
-打开网站后，点击“请设置 API KEY”，选择模型供应商并填入自己的 API Key；输入题目或上传图片，待 AI 生成方案后点击“绘制”即可。API Key 仅保存在当前浏览器本机。
+支持平面几何、函数图像、解析几何和基础立体几何。
 
-## 快速开始
+## 如何使用
 
-```bash
-npm install
-cp .env.example .env
-npm run dev
-```
+1. 打开网站，点击右上角的“请设置 API KEY”。
+2. 选择常用模型供应商，填入自己的 API Key 并保存。
+3. 输入题目文字，或直接上传、粘贴 PNG/JPEG/WebP 题图。
+4. 点击“解析题目”，查看 AI 给出的题意理解、构造步骤和绘图命令。
+5. 点击“绘制到 GeoGebra”，在画布中拖动点和图形；立体题可切换到 `3D` 视图。
 
-打开 `http://localhost:5173/`。如需调用真实 AI，可在网页中设置自己的 API Key，或在 `.env` 中设置 `OPENAI_API_KEY` 作为默认后端 Key。
+相同题目再次提交时，网站会自动读取本机历史解析结果，不会重复调用模型。图片题会按图片内容匹配，避免不同题图误用历史结果。
 
-## API Key 和模型供应商
+## 获取 API Key
 
-网页左侧的“模型 API 设置”支持供应商预设。选择预设后再填入该平台的 API Key 即可；如果模型名和你的账号权限不匹配，改成控制台里实际可用的模型名。
+网站默认由使用者自带 API Key。选择供应商后，通常无需手动填写 Base URL 或模型名；只有在账号权限或模型选择特殊时，才在设置弹窗中调整。
 
-| 平台 | Base URL | 默认模型示例 | 获取 API Key |
-| --- | --- | --- | --- |
-| OpenAI 官方 | 留空 | 留空或 OpenAI 模型名 | https://platform.openai.com/api-keys |
-| 阿里云百炼 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen3-vl-plus`（支持图片理解） | https://bailian.console.aliyun.com/ |
-| DeepSeek | `https://api.deepseek.com` | `deepseek-chat` | https://platform.deepseek.com/api_keys |
-| 火山方舟 | `https://ark.cn-beijing.volces.com/api/v3` | `doubao-seed-1-6-250615` 或控制台接入点名 | https://console.volcengine.com/ark/ |
-| 腾讯混元 | `https://api.hunyuan.cloud.tencent.com/v1` | `hunyuan-turbos-latest` | https://console.cloud.tencent.com/hunyuan |
-| 百度千帆 | `https://qianfan.baidubce.com/v2` | `ernie-4.0-turbo-8k` | https://console.bce.baidu.com/qianfan/ais/console/applicationConsole/application |
-| 智谱 GLM | `https://open.bigmodel.cn/api/paas/v4` | `glm-4-plus` | https://open.bigmodel.cn/usercenter/apikeys |
-| 月之暗面 | `https://api.moonshot.cn/v1` | `moonshot-v1-8k` | https://platform.moonshot.cn/console/api-keys |
-| MiniMax | `https://api.minimax.chat/v1` | `MiniMax-Text-01` | https://platform.minimaxi.com/user-center/basic-information/interface-key |
-| 硅基流动 | `https://api.siliconflow.cn/v1` | `Qwen/Qwen2.5-7B-Instruct` | https://cloud.siliconflow.cn/account/ak |
-| Google Gemini | `https://generativelanguage.googleapis.com/v1beta/openai` | `gemini-2.0-flash` | https://aistudio.google.com/apikey |
+| 平台 | API Key 申请入口 | 说明 |
+| --- | --- | --- |
+| OpenAI | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) | 图片题请使用支持视觉的模型。 |
+| 阿里云百炼 | [bailian.console.aliyun.com](https://bailian.console.aliyun.com/) | 默认使用支持图片理解的 `qwen3-vl-plus`。 |
+| DeepSeek | [platform.deepseek.com/api_keys](https://platform.deepseek.com/api_keys) | 适合文字题，不支持题图识别。 |
+| 火山方舟 | [console.volcengine.com/ark](https://console.volcengine.com/ark/) | 可在设置中选择控制台可用模型。 |
+| 腾讯混元 | [console.cloud.tencent.com/hunyuan](https://console.cloud.tencent.com/hunyuan) | 使用兼容接口。 |
+| 百度千帆 | [console.bce.baidu.com/qianfan](https://console.bce.baidu.com/qianfan/ais/console/applicationConsole/application) | 使用兼容接口。 |
+| 智谱 GLM | [open.bigmodel.cn/usercenter/apikeys](https://open.bigmodel.cn/usercenter/apikeys) | 模型以控制台权限为准。 |
+| 月之暗面 | [platform.moonshot.cn/console/api-keys](https://platform.moonshot.cn/console/api-keys) | 视觉能力取决于所选模型。 |
+| MiniMax | [platform.minimaxi.com](https://platform.minimaxi.com/user-center/basic-information/interface-key) | 使用兼容接口。 |
+| 硅基流动 | [cloud.siliconflow.cn](https://cloud.siliconflow.cn/account/ak) | 模型名称以平台列表为准。 |
+| Google Gemini | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | 支持图片理解。 |
 
-注意事项：
+## 使用说明
 
-- 使用非 OpenAI 官方 Key 时，必须同时设置该平台的 `Base URL` 和 `模型名`。只填 Key 不填 Base URL，会被发到 OpenAI 官方接口并返回 401。
-- 图片题需要视觉模型；部分平台或默认模型只支持文字输入。
-- Anthropic Claude 等非 OpenAI 兼容协议的平台暂不在这个 MVP 支持范围内，后续可单独加适配器。
-- 后端只允许上表中的官方兼容域名，避免把本机服务变成任意 URL 代理。
-
-如果只想本地测试界面和绘图流程，可以设置：
-
-```bash
-USE_MOCK_AI=1
-```
-
-## 运行
-
-```bash
-npm run dev
-```
-
-打开 `http://localhost:5173/`。API 运行在 `http://localhost:3001/`，Vite 会把 `/api` 请求代理到后端。
-
-## 公开部署
-
-本项目包含 API 接口，因此不能只使用 GitHub Pages。当前已适配 Vercel：Vite 负责构建前端，`api/[...path].js` 负责 Vercel Serverless Function。
-
-1. 将代码推送到 GitHub 仓库。
-2. 打开 [Vercel New Project](https://vercel.com/new)，导入 GitHub 仓库。
-3. 保持默认设置：Build Command 为 `npm run build`，Output Directory 为 `dist`。
-4. 点击 Deploy。当前正式入口为 [https://awesome-geogebra-ai.vercel.app/](https://awesome-geogebra-ai.vercel.app/)；后续推送 `main` 分支会自动部署到该网址。
-
-默认情况下，公开网站要求每个访问者在页面中输入自己的模型 API Key；浏览器只会在本机保存该 Key，并在请求时发送给服务端转发到所选模型平台。不要在 Vercel 环境变量或 Git 仓库中填写个人 API Key，除非你已经为访问控制、配额和滥用风险做好了服务端保护。
-
-Vercel Hobby 适合非商业个人项目；免费层包含 Serverless Function 调用额度，但受到套餐限制。[Vercel Hobby 文档](https://vercel.com/docs/plans/hobby)
-
-## 测试
-
-```bash
-npm test
-npm run build
-```
-
-API 接口 `POST /api/solve` 接收 multipart form data：
-
-- `text`：可选，题目文字
-- `image`：可选，PNG、JPEG 或 WebP 题目图片，最大 8 MB
-
-`text` 和 `image` 至少需要提供一个。
-
-## 安全边界
-
-模型必须返回严格 JSON，包括题目摘要、构造步骤、视野范围和 GeoGebra 命令字符串。后端会先用保守的 MVP 命令白名单校验，再把命令返回给浏览器。生成的 JavaScript、脚本命令、文件操作、破坏性命令和不支持的命令名都会被拦截。
-
-## 说明
-
-GeoGebra 默认从 `https://www.geogebra.org/apps/deployggb.js` 加载。如果后续需要离线部署，可以改为自托管 GeoGebra Math Apps bundle，并设置 applet 的 HTML5 codebase。
-
-网页里的 API Key 设置适合本地 Demo 和个人使用。不要把 Key 写进前端代码、提交到 Git，或用于公开部署的多用户站点；公开部署应使用登录账号和服务端加密存储，或每次会话临时输入。后端当前只允许上表中的 OpenAI 兼容官方域名，避免把本机服务变成任意 URL 代理。
+- API Key 只保存在当前浏览器本机，不会写入 GitHub 仓库。
+- 图片题需要选择支持视觉理解的模型。
+- 请勿在公开场所分享自己的 API Key。
+- AI 生成的图形用于辅助理解和探索；重要结论请结合题目条件自行核对。
