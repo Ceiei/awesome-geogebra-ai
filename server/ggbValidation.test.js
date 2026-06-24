@@ -14,6 +14,7 @@ describe("GeoGebra command validation", () => {
     expect(validateGgbCommand("Prism(Polygon(A,B,C,D), 4)").ok).toBe(true);
     expect(validateGgbCommand("Sphere(P, 3)").ok).toBe(true);
     expect(validateGgbCommand("SetColor(l, 220, 38, 38)").ok).toBe(true);
+    expect(validateGgbCommand('SetColor(l, "Red")').ok).toBe(true);
     expect(validateGgbCommand('Text["距离 = " + dist, (3, 3, 2)]')).toEqual({
       ok: true,
       command: 'Text("距离 = " + dist, (3, 3, 2))'
