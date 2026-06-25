@@ -1,7 +1,7 @@
 import "dotenv/config";
 import OpenAI from "openai";
 import { allowedCommandsForPrompt } from "./ggbValidation.js";
-import { solveJsonSchema } from "./solveSchema.js";
+import { commandJsonSchema, solveJsonSchema } from "./solveSchema.js";
 
 export const providerPresets = [
   {
@@ -114,6 +114,22 @@ function buildJsonInstruction() {
   ].join("\n");
 }
 
+function buildCommandUserText({ problemSummary, mathType, constructionSteps, viewport }) {
+  return [
+    "请根据用户修订后的构造步骤，重新生成完整 GeoGebra 命令。",
+    "不要重新解释题目，不要省略已需要的基础对象定义。",
+    "如果步骤中提到点、线段、平面、函数、角度、距离或辅助对象，必须先定义对象再使用。",
+    "",
+    `题目摘要：${problemSummary || "未提供"}`,
+    `数学类型：${mathType || "geometry"}`,
+    `建议视野：${JSON.stringify(viewport || {})}`,
+    "用户修订后的构造步骤：",
+    constructionSteps.map((step, index) => `${index + 1}. ${step}`).join("\n"),
+    "",
+    buildJsonInstruction()
+  ].join("\n");
+}
+
 function buildUserContent({ text, image }) {
   const content = [
     {
@@ -219,6 +235,32 @@ async function solveWithResponsesApi({ client, model, text, image }) {
   return response.output_text;
 }
 
+async function generateCommandsWithResponsesApi({ client, model, problemSummary, mathType, constructionSteps, viewport }) {
+  const response = await client.responses.create({
+    model,
+    input: [
+      { role: "system", content: buildSystemPrompt() },
+      {
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: buildCommandUserText({ problemSummary, mathType, constructionSteps, viewport })
+          }
+        ]
+      }
+    ],
+    text: {
+      format: {
+        type: "json_schema",
+        ...commandJsonSchema
+      }
+    }
+  });
+
+  return response.output_text;
+}
+
 async function solveWithChatCompletions({ client, model, text, image }) {
   const response = await client.chat.completions.create({
     model,
@@ -232,7 +274,23 @@ async function solveWithChatCompletions({ client, model, text, image }) {
   return response.choices?.[0]?.message?.content || "";
 }
 
-export async function solveWithOpenAI({ text, image, apiKey, baseUrl, model }) {
+async function generateCommandsWithChatCompletions({ client, model, problemSummary, mathType, constructionSteps, viewport }) {
+  const response = await client.chat.completions.create({
+    model,
+    messages: [
+      { role: "system", content: `${buildSystemPrompt()}\n${buildJsonInstruction()}` },
+      {
+        role: "user",
+        content: buildCommandUserText({ problemSummary, mathType, constructionSteps, viewport })
+      }
+    ],
+    response_format: { type: "json_object" }
+  });
+
+  return response.choices?.[0]?.message?.content || "";
+}
+
+function createOpenAIClient({ apiKey, baseUrl, model }) {
   const resolvedApiKey = apiKey || process.env.OPENAI_API_KEY;
   if (!resolvedApiKey) {
     const error = new Error("尚未配置 OPENAI_API_KEY。请在 .env 中设置，或启用 USE_MOCK_AI=1 进行本地界面测试。");
@@ -249,9 +307,10 @@ export async function solveWithOpenAI({ text, image, apiKey, baseUrl, model }) {
     ...(resolvedBaseUrl ? { baseURL: resolvedBaseUrl } : {})
   });
 
-  const output = resolvedBaseUrl
-    ? await solveWithChatCompletions({ client, model: resolvedModel, text, image })
-    : await solveWithResponsesApi({ client, model: resolvedModel, text, image });
+  return { client, resolvedBaseUrl, resolvedModel };
+}
+
+function parseModelJson(output) {
   if (!output) {
     const error = new Error("模型返回了空响应。");
     error.statusCode = 502;
@@ -265,4 +324,22 @@ export async function solveWithOpenAI({ text, image, apiKey, baseUrl, model }) {
     error.statusCode = 502;
     throw error;
   }
+}
+
+export async function solveWithOpenAI({ text, image, apiKey, baseUrl, model }) {
+  const { client, resolvedBaseUrl, resolvedModel } = createOpenAIClient({ apiKey, baseUrl, model });
+
+  const output = resolvedBaseUrl
+    ? await solveWithChatCompletions({ client, model: resolvedModel, text, image })
+    : await solveWithResponsesApi({ client, model: resolvedModel, text, image });
+  return parseModelJson(output);
+}
+
+export async function generateCommandsWithOpenAI({ problemSummary, mathType, constructionSteps, viewport, apiKey, baseUrl, model }) {
+  const { client, resolvedBaseUrl, resolvedModel } = createOpenAIClient({ apiKey, baseUrl, model });
+
+  const output = resolvedBaseUrl
+    ? await generateCommandsWithChatCompletions({ client, model: resolvedModel, problemSummary, mathType, constructionSteps, viewport })
+    : await generateCommandsWithResponsesApi({ client, model: resolvedModel, problemSummary, mathType, constructionSteps, viewport });
+  return parseModelJson(output);
 }

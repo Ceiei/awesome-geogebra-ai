@@ -94,3 +94,40 @@ export function buildMockSolveResult(text = "") {
     followupQuestion: null
   };
 }
+
+export function buildMockCommandsFromSteps({ problemSummary = "", mathType = "geometry", constructionSteps = [], viewport } = {}) {
+  return {
+    problemSummary: problemSummary || "根据修订步骤生成的绘图方案",
+    mathType,
+    constructionSteps,
+    ggbCommands: mathType === "solid_geometry"
+      ? [
+        "A=(0,0,0)",
+        "B=(3,0,0)",
+        "C=(0,3,0)",
+        "A1=(0,0,3)",
+        "B1=(3,0,3)",
+        "C1=(0,3,3)",
+        "Segment(A,B)",
+        "Segment(B,C)",
+        "Segment(C,A)",
+        "Segment(A1,B1)",
+        "Segment(B1,C1)",
+        "Segment(C1,A1)",
+        "Segment(A,A1)",
+        "Segment(B,B1)",
+        "Segment(C,C1)"
+      ]
+      : [
+        "A=(0,0)",
+        "B=(4,0)",
+        "C=(2,3)",
+        "Polygon(A,B,C)",
+        "Segment(A,C)",
+        "Segment(B,C)"
+      ],
+    viewport: viewport || { xmin: -5, xmax: 5, ymin: -4, ymax: 5 },
+    warnings: ["已根据用户修订的构造步骤重新生成命令。"],
+    followupQuestion: null
+  };
+}

@@ -49,6 +49,12 @@ export const solveJsonSchema = {
   }
 };
 
+export const commandJsonSchema = {
+  name: "geogebra_commands_from_steps",
+  strict: true,
+  schema: solveJsonSchema.schema
+};
+
 export function normalizeSolveResult(raw) {
   const result = raw && typeof raw === "object" ? raw : {};
   const mathType = ["geometry", "function", "analytic_geometry", "solid_geometry"].includes(result.mathType)

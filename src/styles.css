@@ -677,6 +677,34 @@ pre {
   line-height: 1.4;
 }
 
+.error-box.compact {
+  align-items: center;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.steps-editor {
+  width: 100%;
+  min-height: 94px;
+  max-height: 150px;
+  margin-top: 8px;
+  padding: 10px 11px;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow: auto;
+}
+
+.steps-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.steps-actions .secondary-button {
+  min-height: 32px;
+  font-size: 12px;
+}
+
 .warning-box {
   border: 1px solid #fedf89;
   background: #fffaeb;
@@ -704,10 +732,11 @@ pre {
 
 .empty-state {
   display: grid;
+  flex: 1;
   place-items: center;
   gap: 14px;
-  min-height: 260px;
-  margin: 18px;
+  min-height: 0;
+  margin: 14px;
   border: 1px dashed #b9c7dc;
   border-radius: 8px;
   color: var(--muted);
@@ -1230,10 +1259,64 @@ textarea {
   align-items: center;
 }
 
+.dialog-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dialog-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.dialog-toolbar span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.dialog-toolbar .secondary-button {
+  min-height: 32px;
+  font-size: 12px;
+}
+
+.dialog-copy-error {
+  margin: -6px 0 0;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.dialog-copy-success {
+  margin: -6px 0 0;
+  color: var(--success);
+  font-size: 12px;
+}
+
 .dialog-code {
   max-height: min(520px, calc(100vh - 140px));
   margin: 0;
   overflow: auto;
+}
+
+.command-editor {
+  min-height: min(500px, calc(100vh - 190px));
+  resize: none;
+  border-color: #d4ddea;
+  background: #101828;
+  color: #d6e4ff;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre;
+}
+
+.command-editor:focus {
+  border-color: #84adff;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
 }
 
 .dialog-history-list {
@@ -1360,6 +1443,7 @@ textarea {
 
   .empty-state {
     margin: 8px;
+    min-height: 220px;
   }
 
   .empty-state p {

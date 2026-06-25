@@ -44,4 +44,28 @@ describe("solve API", () => {
 
     expect(response.status).toBe(415);
   });
+
+  it("rejects command regeneration without construction steps", async () => {
+    process.env.USE_MOCK_AI = "1";
+    const response = await request(createApp()).post("/api/commands").send({ constructionSteps: [] });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toContain("构造步骤");
+  });
+
+  it("regenerates safe commands from edited construction steps", async () => {
+    process.env.USE_MOCK_AI = "1";
+    const response = await request(createApp())
+      .post("/api/commands")
+      .send({
+        problemSummary: "构造三角形",
+        mathType: "geometry",
+        constructionSteps: ["放置 A、B、C 三点。", "连接三条边。"],
+        viewport: { xmin: -5, xmax: 5, ymin: -4, ymax: 5 }
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.constructionSteps).toEqual(["放置 A、B、C 三点。", "连接三条边。"]);
+    expect(response.body.ggbCommands).toContain("Polygon(A,B,C)");
+  });
 });

@@ -5,6 +5,7 @@ import {
   Braces,
   CheckCircle2,
   ChevronRight,
+  Copy,
   Download,
   ExternalLink,
   FileImage,
@@ -413,7 +414,7 @@ function GeoGebraCanvas({ result, renderRequest }) {
               className="icon-button canvas-download-control"
               type="button"
               onClick={() => setIsDownloadMenuOpen((value) => !value)}
-              title="下载"
+              title="下载 GGB 或网页版"
               aria-expanded={isDownloadMenuOpen}
               aria-haspopup="menu"
             >
@@ -422,10 +423,10 @@ function GeoGebraCanvas({ result, renderRequest }) {
             {isDownloadMenuOpen ? (
               <div className="download-menu-popover" role="menu">
                 <button type="button" role="menuitem" onClick={() => downloadConstruction("ggb")}>
-                  下载 GGB 文件
+                  下载 .ggb 文件
                 </button>
                 <button type="button" role="menuitem" onClick={() => downloadConstruction("web")}>
-                  下载网页版 HTML
+                  下载网页版 .html
                 </button>
               </div>
             ) : null}
@@ -447,7 +448,7 @@ function GeoGebraCanvas({ result, renderRequest }) {
         <div id="ggb-canvas" ref={containerRef} />
       </div>
       <div className="render-log">
-        <span>{commandResults.length ? "绘制日志" : "绘制后可以直接在 GeoGebra 中拖动点和图形。"}</span>
+        <span>{commandResults.length ? "绘制日志" : "绘制后可拖动、缩放，并下载 GGB 或网页文件。"}</span>
         {commandResults.slice(-5).map((entry) => (
           <span className={entry.ok ? "log-ok" : "log-fail"} key={entry.command}>
             {entry.ok ? "成功" : "失败"}: {entry.command}
@@ -730,7 +731,7 @@ function InputPanel({ onSolved, onReuseHistory, history, activeText, setActiveTe
           </div>
           <div>
             <h1>GeoGebra <span>AI</span></h1>
-            <p>数学绘图工作台</p>
+            <p>解析题目 · 编辑步骤 · 交互绘图</p>
           </div>
         </div>
         <ApiKeySettings />
@@ -790,22 +791,61 @@ function InputPanel({ onSolved, onReuseHistory, history, activeText, setActiveTe
 
         <button className="primary-button" type="submit" disabled={isSubmitting}>
           {isSubmitting ? <Loader2 className="spin" size={18} /> : <ChevronRight size={18} />}
-          {isSubmitting ? "正在理解题目" : "解析题目"}
+          {isSubmitting ? "正在理解题目" : "解析并生成方案"}
         </button>
       </form>
     </section>
   );
 }
 
-function PreviewPanel({ result, history, onRender, onSelectHistory, onOpenCommands, onOpenHistory }) {
+function PreviewPanel({
+  result,
+  history,
+  onRender,
+  onRegenerateCommands,
+  onSelectHistory,
+  onOpenCommands,
+  onOpenHistory
+}) {
   const commandCount = result?.ggbCommands?.length || 0;
+  const [editableSteps, setEditableSteps] = useState("");
+  const [isRegenerating, setIsRegenerating] = useState(false);
+  const [regenerateError, setRegenerateError] = useState("");
+
+  useEffect(() => {
+    setEditableSteps(result?.constructionSteps?.join("\n") || "");
+    setRegenerateError("");
+  }, [result]);
+
+  async function regenerateCommands() {
+    if (!result) return;
+    const constructionSteps = editableSteps
+      .split("\n")
+      .map((step) => step.trim())
+      .filter(Boolean);
+
+    if (!constructionSteps.length) {
+      setRegenerateError("请至少保留一条构造步骤。");
+      return;
+    }
+
+    setIsRegenerating(true);
+    setRegenerateError("");
+    try {
+      await onRegenerateCommands(constructionSteps);
+    } catch (error) {
+      setRegenerateError(error.message || "重新生成命令失败。");
+    } finally {
+      setIsRegenerating(false);
+    }
+  }
 
   return (
     <section className="panel preview-panel">
       <div className="panel-header">
         <div>
           <h2>AI 绘图方案</h2>
-          <p>{result ? `${commandCount} 条安全命令已就绪` : "提交题目后生成绘图方案"}</p>
+          <p>{result ? `${commandCount} 条命令可编辑后绘制` : "提交题目后生成可编辑方案"}</p>
         </div>
         <Braces size={20} />
       </div>
@@ -819,12 +859,25 @@ function PreviewPanel({ result, history, onRender, onSelectHistory, onOpenComman
           </div>
 
           <div className="steps-block">
-            <h3>构造步骤</h3>
-            <ol>
-              {result.constructionSteps.slice(0, 3).map((step) => (
-                <li key={step}>{step}</li>
-              ))}
-            </ol>
+            <h3>构造步骤（可编辑）</h3>
+            <textarea
+              className="steps-editor"
+              value={editableSteps}
+              onChange={(event) => setEditableSteps(event.target.value)}
+              placeholder="每行一个构造步骤，修改后可让 AI 重新生成命令。"
+            />
+            <div className="steps-actions">
+              <button className="secondary-button" type="button" onClick={regenerateCommands} disabled={isRegenerating}>
+                {isRegenerating ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+                {isRegenerating ? "正在生成命令" : "根据步骤重新生成命令"}
+              </button>
+            </div>
+            {regenerateError ? (
+              <div className="error-box compact">
+                <AlertTriangle size={15} />
+                <span>{regenerateError}</span>
+              </div>
+            ) : null}
           </div>
 
           {result.warnings.length ? (
@@ -840,11 +893,11 @@ function PreviewPanel({ result, history, onRender, onSelectHistory, onOpenComman
 
           <div className="command-block">
             <div className="block-heading">
-              <h3>GeoGebra 命令</h3>
+              <h3>GeoGebra 命令（可编辑）</h3>
               <span>{commandCount}</span>
             </div>
             <button className="command-preview-button" type="button" onClick={onOpenCommands}>
-              查看命令
+              查看/编辑命令
             </button>
           </div>
 
@@ -867,7 +920,7 @@ function PreviewPanel({ result, history, onRender, onSelectHistory, onOpenComman
       ) : (
         <div className="empty-state">
           <FileImage size={30} />
-          <p>AI 会先理解题目、选择视野范围，并准备可编辑的 GeoGebra 命令；确认后才会绘制。</p>
+          <p>AI 会生成题意摘要、可编辑构造步骤和 GeoGebra 命令；你确认后再绘制。</p>
         </div>
       )}
 
@@ -886,7 +939,7 @@ function PreviewPanel({ result, history, onRender, onSelectHistory, onOpenComman
             </button>
           ))
         ) : (
-          <p className="muted">首次解析后，本地历史会显示在这里。</p>
+          <p className="muted">解析过的题目会在本地复用，避免重复调用模型。</p>
         )}
       </div>
     </section>
@@ -909,12 +962,80 @@ function DialogFrame({ title, children, onClose }) {
   );
 }
 
-function CommandDialog({ result, onClose }) {
+function CommandDialog({ result, onUpdateCommands, onClose }) {
+  const [commandsText, setCommandsText] = useState(result?.ggbCommands?.join("\n") || "");
+  const [copyStatus, setCopyStatus] = useState("");
+  const [saveStatus, setSaveStatus] = useState("");
+
+  useEffect(() => {
+    setCommandsText(result?.ggbCommands?.join("\n") || "");
+    setCopyStatus("");
+    setSaveStatus("");
+  }, [result]);
+
   if (!result) return null;
 
+  async function copyCommands() {
+    setCopyStatus("");
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(commandsText);
+      } else {
+        const textArea = document.createElement("textarea");
+        textArea.value = commandsText;
+        textArea.setAttribute("readonly", "");
+        textArea.style.position = "fixed";
+        textArea.style.left = "-9999px";
+        document.body.append(textArea);
+        textArea.select();
+        document.execCommand("copy");
+        textArea.remove();
+      }
+      setCopyStatus("已复制");
+      window.setTimeout(() => setCopyStatus(""), 1600);
+    } catch {
+      setCopyStatus("复制失败，请手动选择命令文本。");
+    }
+  }
+
+  function saveCommands() {
+    const commands = commandsText
+      .split("\n")
+      .map((command) => command.trim())
+      .filter(Boolean);
+
+    onUpdateCommands(commands);
+    setSaveStatus(`已保存 ${commands.length} 条命令`);
+    window.setTimeout(() => setSaveStatus(""), 1600);
+  }
+
   return (
-    <DialogFrame title="GeoGebra 命令" onClose={onClose}>
-      <pre className="dialog-code">{result.ggbCommands.join("\n")}</pre>
+    <DialogFrame title="查看/编辑 GeoGebra 命令" onClose={onClose}>
+      <div className="dialog-toolbar">
+        <span>{commandsText.split("\n").filter((command) => command.trim()).length} 条命令，保存后用于绘制</span>
+        <div className="dialog-toolbar-actions">
+          <button className="secondary-button" type="button" onClick={saveCommands}>
+            <CheckCircle2 size={15} />
+            保存命令
+          </button>
+          <button className="secondary-button" type="button" onClick={copyCommands}>
+            <Copy size={15} />
+            {copyStatus === "已复制" ? "已复制" : "复制命令"}
+          </button>
+        </div>
+      </div>
+      {saveStatus ? <p className="dialog-copy-success">{saveStatus}</p> : null}
+      {copyStatus && copyStatus !== "已复制" ? <p className="dialog-copy-error">{copyStatus}</p> : null}
+      <textarea
+        className="dialog-code command-editor"
+        value={commandsText}
+        onChange={(event) => {
+          setCommandsText(event.target.value);
+          setSaveStatus("");
+        }}
+        spellCheck="false"
+      />
     </DialogFrame>
   );
 }
@@ -970,6 +1091,43 @@ function App() {
     setResult(item.result);
   }
 
+  function updateCommands(commands) {
+    setResult((current) => current
+      ? {
+        ...current,
+        ggbCommands: commands,
+        rejectedCommands: []
+      }
+      : current);
+  }
+
+  async function regenerateCommands(constructionSteps) {
+    if (!latestResult) return;
+
+    const apiSettings = readApiSettings();
+    const headers = { "Content-Type": "application/json" };
+    if (apiSettings.apiKey) headers["X-OpenAI-API-Key"] = apiSettings.apiKey;
+    if (apiSettings.baseUrl) headers["X-OpenAI-Base-URL"] = apiSettings.baseUrl;
+    if (apiSettings.model) headers["X-OpenAI-Model"] = apiSettings.model;
+
+    const response = await fetch("/api/commands", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        problemSummary: latestResult.problemSummary,
+        mathType: latestResult.mathType,
+        viewport: latestResult.viewport,
+        constructionSteps
+      })
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error || "重新生成命令失败。");
+    }
+
+    setResult(payload);
+  }
+
   return (
     <main className="app-shell">
       <InputPanel
@@ -983,12 +1141,19 @@ function App() {
         result={latestResult}
         history={history}
         onRender={() => setRenderRequest((value) => value + 1)}
+        onRegenerateCommands={regenerateCommands}
         onSelectHistory={selectHistory}
         onOpenCommands={() => setIsCommandOpen(true)}
         onOpenHistory={() => setIsHistoryOpen(true)}
       />
       <GeoGebraCanvas result={latestResult} renderRequest={renderRequest} />
-      {isCommandOpen ? <CommandDialog result={latestResult} onClose={() => setIsCommandOpen(false)} /> : null}
+      {isCommandOpen ? (
+        <CommandDialog
+          result={latestResult}
+          onUpdateCommands={updateCommands}
+          onClose={() => setIsCommandOpen(false)}
+        />
+      ) : null}
       {isHistoryOpen ? <HistoryDialog history={history} onSelect={selectHistory} onClose={() => setIsHistoryOpen(false)} /> : null}
     </main>
   );
