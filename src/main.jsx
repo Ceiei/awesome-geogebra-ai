@@ -5,6 +5,7 @@ import {
   Braces,
   CheckCircle2,
   ChevronRight,
+  Download,
   ExternalLink,
   FileImage,
   History,
@@ -21,6 +22,7 @@ import {
   ZoomOut
 } from "lucide-react";
 import { executeGgbCommand, get3DCoordinateSystem } from "./ggbExecutor.js";
+import { downloadGgbConstruction, downloadGgbWebPage } from "./ggbDownload.js";
 import { createHistoryCacheKey, findHistoryCacheHit } from "./historyCache.js";
 import { enhanceSolidGeometryCommands } from "../shared/solidGeometryEnhancer.js";
 import "./styles.css";
@@ -177,6 +179,7 @@ function GeoGebraCanvas({ result, renderRequest }) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [viewMode, setViewMode] = useState("2d");
   const [appletReadyVersion, setAppletReadyVersion] = useState(0);
+  const [isDownloadMenuOpen, setIsDownloadMenuOpen] = useState(false);
 
   function resizeApplet() {
     const container = containerRef.current;
@@ -358,6 +361,21 @@ function GeoGebraCanvas({ result, renderRequest }) {
     }
   }
 
+  function downloadConstruction(format) {
+    try {
+      if (format === "web") {
+        downloadGgbWebPage(appletRef.current, { appName: viewMode === "3d" ? "3d" : "classic" });
+        setStatus("已下载网页版 HTML");
+      } else {
+        downloadGgbConstruction(appletRef.current);
+        setStatus("已下载 .ggb 文件");
+      }
+      setIsDownloadMenuOpen(false);
+    } catch (error) {
+      setStatus(error.message || "导出文件失败");
+    }
+  }
+
   return (
     <section className={`panel canvas-panel${isFullscreen ? " canvas-panel-fullscreen" : ""}`}>
       <div className="panel-header">
@@ -390,6 +408,28 @@ function GeoGebraCanvas({ result, renderRequest }) {
           <button className="icon-button canvas-zoom-control" type="button" onClick={() => changeZoom("out")} title="缩小画布">
             <ZoomOut size={17} />
           </button>
+          <div className="download-menu">
+            <button
+              className="icon-button canvas-download-control"
+              type="button"
+              onClick={() => setIsDownloadMenuOpen((value) => !value)}
+              title="下载"
+              aria-expanded={isDownloadMenuOpen}
+              aria-haspopup="menu"
+            >
+              <Download size={17} />
+            </button>
+            {isDownloadMenuOpen ? (
+              <div className="download-menu-popover" role="menu">
+                <button type="button" role="menuitem" onClick={() => downloadConstruction("ggb")}>
+                  下载 GGB 文件
+                </button>
+                <button type="button" role="menuitem" onClick={() => downloadConstruction("web")}>
+                  下载网页版 HTML
+                </button>
+              </div>
+            ) : null}
+          </div>
           <button
             className="icon-button canvas-fullscreen-control"
             type="button"
