@@ -171,6 +171,15 @@ function formatMathType(mathType) {
   return labels[mathType] || "数学绘图";
 }
 
+function getFreePointLabels(commands) {
+  return Array.from(new Set(
+    commands
+      .map((command) => String(command).match(/^\s*([A-Za-z][A-Za-z0-9_]*)\s*=\s*\(\s*[^,]+\s*,/))
+      .filter(Boolean)
+      .map((match) => match[1])
+  ));
+}
+
 function GeoGebraCanvas({ result, renderRequest }) {
   const containerRef = useRef(null);
   const shellRef = useRef(null);
@@ -309,6 +318,14 @@ function GeoGebraCanvas({ result, renderRequest }) {
       for (const objectName of objectNames) {
         api.setVisible?.(objectName, true);
       }
+      for (const pointLabel of getFreePointLabels(commandsToRender)) {
+        try {
+          api.setFixed?.(pointLabel, false, true);
+        } catch {
+          // Some GeoGebra builds reject fixed-state changes for dependent objects.
+        }
+      }
+      api.setMode?.(0);
       setCommandResults(nextCommandResults);
       setStatus(objectNames.length || nextCommandResults.some((item) => item.ok) ? "已绘制" : "未生成可见对象");
     } catch (error) {
