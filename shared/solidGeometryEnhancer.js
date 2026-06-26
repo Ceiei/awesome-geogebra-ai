@@ -23,7 +23,9 @@ const squarePyramidEdges = [
 
 const SOLID_FACE_FILLING = 0.04;
 const EDGE_COLOR = "31,41,55";
-const AUXILIARY_FACE_COLOR = "14,116,144";
+const KEY_SEGMENT_COLOR = "17,24,39";
+const AUXILIARY_FACE_COLOR = "96,165,250";
+const POINT_COLOR = "37,99,235";
 
 function hasCommand(commands, expression) {
   return commands.some((command) => expression.test(command));
@@ -61,7 +63,7 @@ function canonicalFaceKey(points) {
   return [...points].sort().join("|");
 }
 
-function normalizeSolidCommand(command, assignedPolygonFaces) {
+function normalizeSolidCommand(command, assignedPolygonFaces, visualObjectLabels) {
   if (isDuplicatePointTextLabel(command)) return null;
 
   const unlabeledPolygon = command.match(/^\s*Polygon\s*[\[(]\s*([^)]+?)\s*[\])]\s*$/i);
@@ -76,6 +78,12 @@ function normalizeSolidCommand(command, assignedPolygonFaces) {
     const nextValue = Math.min(Number(value), SOLID_FACE_FILLING);
     return `SetFilling(${label},${nextValue})`;
   }
+
+  const color = command.match(/^SetColor\s*[\[(]\s*([A-Za-z][A-Za-z0-9_]*)\s*,/i);
+  if (color && visualObjectLabels.has(color[1])) return null;
+
+  const lineThickness = command.match(/^SetLineThickness\s*[\[(]\s*([A-Za-z][A-Za-z0-9_]*)\s*,/i);
+  if (lineThickness && visualObjectLabels.has(lineThickness[1])) return null;
 
   return command;
 }
@@ -106,12 +114,27 @@ function addEdgeTemplate(enhanced, labels, requiredLabels, edgeTemplate) {
   }
 }
 
+function uniqueCommands(commands) {
+  const seen = new Set();
+  return commands.filter((command) => {
+    if (seen.has(command)) return false;
+    seen.add(command);
+    return true;
+  });
+}
+
 export function enhanceSolidGeometryCommands({ mathType, commands }) {
   if (mathType !== "solid_geometry" || !Array.isArray(commands)) return commands;
 
   const assignedPolygonFaces = new Set(getAssignedPolygonLabels(commands).map((polygon) => canonicalFaceKey(polygon.points)));
+  const visualObjectLabels = new Set(
+    commands.flatMap((command) => {
+      const match = command.match(/^\s*([A-Za-z][A-Za-z0-9_]*)\s*=\s*(Segment|Polygon|Plane)\s*[\[(]/i);
+      return match ? [match[1]] : [];
+    })
+  );
   const enhanced = commands
-    .map((command) => normalizeSolidCommand(command, assignedPolygonFaces))
+    .map((command) => normalizeSolidCommand(command, assignedPolygonFaces, visualObjectLabels))
     .filter(Boolean);
   const labels = new Set(
     enhanced.flatMap((command) => {
@@ -135,6 +158,14 @@ export function enhanceSolidGeometryCommands({ mathType, commands }) {
     if (!hasCommand(enhanced, new RegExp(`^\\s*ShowLabel\\s*[\\[(]\\s*${label}\\s*,`, "i"))) {
       enhanced.push(`ShowLabel(${label},true)`);
     }
+    enhanced.push(`SetColor(${label},${POINT_COLOR})`);
+    enhanced.push("SetPointSize(" + label + ",6)");
+  }
+
+  for (const polygon of getAssignedPolygonLabels(enhanced)) {
+    enhanced.push(`SetFilling(${polygon.label},${SOLID_FACE_FILLING})`);
+    enhanced.push(`SetColor(${polygon.label},${AUXILIARY_FACE_COLOR})`);
+    enhanced.push(`ShowLabel(${polygon.label},false)`);
   }
 
   for (const plane of getAssignedPlaneLabels(commands)) {
@@ -152,16 +183,21 @@ export function enhanceSolidGeometryCommands({ mathType, commands }) {
       const facePoints = [...plane.points, `${oppositePoint}1`];
       if (!hasCommand(enhanced, new RegExp(`^\\s*${faceLabel}\\s*=\\s*Polygon`, "i"))) {
         enhanced.push(`${faceLabel}=Polygon(${facePoints.join(",")})`);
-        enhanced.push(`SetFilling(${faceLabel},${SOLID_FACE_FILLING})`);
-        enhanced.push(`SetColor(${faceLabel},${AUXILIARY_FACE_COLOR})`);
-        enhanced.push(`ShowLabel(${faceLabel},false)`);
       }
+      enhanced.push(`SetFilling(${faceLabel},${SOLID_FACE_FILLING})`);
+      enhanced.push(`SetColor(${faceLabel},${AUXILIARY_FACE_COLOR})`);
+      enhanced.push(`ShowLabel(${faceLabel},false)`);
     }
   }
 
   if (labels.has("D") && labels.has("E") && !hasCommand(enhanced, /^\s*SetLineThickness\s*[\[(]\s*DE\s*,/i)) {
     enhanced.push("SetLineThickness(DE,5)");
   }
+  if (labels.has("DE")) {
+    enhanced.push(`SetColor(DE,${KEY_SEGMENT_COLOR})`);
+    enhanced.push("SetLineThickness(DE,5)");
+    enhanced.push("ShowLabel(DE,false)");
+  }
 
-  return enhanced;
+  return uniqueCommands(enhanced);
 }

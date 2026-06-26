@@ -19,6 +19,8 @@ describe("solid geometry command enhancement", () => {
       "SetVisible(plane1,false)", "SetVisible(plane2,false)",
       "faceplane1=Polygon(C,B,C1,B1)", "faceplane2=Polygon(A,C,C1,A1)",
       "SetFilling(faceplane1,0.04)", "SetFilling(faceplane2,0.04)",
+      "SetColor(faceplane1,96,165,250)", "SetColor(faceplane2,96,165,250)",
+      "SetColor(A,37,99,235)", "SetPointSize(A,6)",
       "ShowLabel(A,true)", "ShowLabel(B,true)", "ShowLabel(C,true)",
       "SetLineThickness(DE,5)"
     ]));
@@ -59,6 +61,33 @@ describe("solid geometry command enhancement", () => {
     expect(commands).not.toContain("Polygon(B,C,C1)");
     expect(commands).toContain("face1=Polygon(C1,C,B)");
     expect(commands).toContain("SetFilling(face1,0.04)");
+  });
+
+  it("normalizes inconsistent AI colors for solid faces and key segments", () => {
+    const commands = enhanceSolidGeometryCommands({
+      mathType: "solid_geometry",
+      commands: [
+        "A=(0,0,0)",
+        "B=(1,0,0)",
+        "C=(0,1,0)",
+        "D=Midpoint(A,B)",
+        "E=Midpoint(A,C)",
+        "DE=Segment(D,E)",
+        "face1=Polygon(A,B,C)",
+        "SetColor(face1,\"#FFD700\")",
+        "SetFilling(face1,0.3)",
+        "SetColor(DE,\"Red\")",
+        "SetLineThickness(DE,9)"
+      ]
+    });
+
+    expect(commands).not.toContain("SetColor(face1,\"#FFD700\")");
+    expect(commands).not.toContain("SetColor(DE,\"Red\")");
+    expect(commands).not.toContain("SetLineThickness(DE,9)");
+    expect(commands).toContain("SetColor(face1,96,165,250)");
+    expect(commands).toContain("SetFilling(face1,0.04)");
+    expect(commands).toContain("SetColor(DE,17,24,39)");
+    expect(commands).toContain("SetLineThickness(DE,5)");
   });
 
   it("adds standard cube and square pyramid edge templates", () => {
