@@ -146,6 +146,39 @@ describe("solve API", () => {
     ]));
   });
 
+  it("keeps focus, directrix, filled triangle, perpendicular foot, and locus for sideways parabola problems", async () => {
+    process.env.USE_MOCK_AI = "1";
+    const response = await request(createApp())
+      .post("/api/solve")
+      .field("text", "已知抛物线 C: y^2=4x，焦点为 F，准线为 x=-1。过点 T(t,0) 作斜率为 k 的直线 l，与抛物线交于 A、B 两点。设 M 为 AB 中点，过 M 作准线的垂线，垂足为 H。观察 M 的轨迹和三角形 FAB 的面积变化。");
+
+    expect(response.status).toBe(200);
+    expect(response.body.mathType).toBe("analytic_geometry");
+    expect(response.body.dynamicControls).toEqual([
+      { name: "t", description: "点 T 的横坐标", min: 0, max: 4, step: 0.1 },
+      { name: "k", description: "直线斜率", min: 0.4, max: 2.4, step: 0.1 }
+    ]);
+    expect(response.body.rejectedCommands).toEqual([]);
+    expect(response.body.ggbCommands).toEqual(expect.arrayContaining([
+      "C: x=y^2/4",
+      "k=Slider(0.4,2.4,0.1,1,180,false,true,false,false)",
+      "F=(1,0)",
+      "directrix=Line((-1,-7),(-1,7))",
+      "l=Line(T,(t+1,k))",
+      "A=Intersect(C,l,1)",
+      "B=Intersect(C,l,2)",
+      "M=Midpoint(A,B)",
+      "H=(-1,y(M))",
+      "height=Segment(M,H)",
+      "TriangleFAB=Polygon(F,A,B)",
+      "AreaFAB=Area(TriangleFAB)",
+      "path=Locus(M,k)",
+      "SetFilling(TriangleFAB,0.35)",
+      "SetColor(height,37,99,235)",
+      "SetColor(path,13,148,136)"
+    ]));
+  });
+
   it("rejects unsupported image MIME types", async () => {
     process.env.USE_MOCK_AI = "1";
     const response = await request(createApp())

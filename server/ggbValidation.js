@@ -189,8 +189,16 @@ function looksLikeFunctionAssignment(command) {
 }
 
 function looksLikeLabeledEquation(command) {
-  const match = command.match(/^\s*([A-Za-z][A-Za-z0-9_]*)\s*:\s*([xy])\s*=\s*(.+?)\s*$/i);
-  return Boolean(match && LABEL_PATTERN.test(match[1]) && isSafeCoordinateExpression(match[3]));
+  const match = command.match(/^\s*([A-Za-z][A-Za-z0-9_]*)\s*:\s*(.+?)\s*=\s*(.+?)\s*$/i);
+  if (!match || !LABEL_PATTERN.test(match[1])) return false;
+
+  const [, , leftExpression, rightExpression] = match;
+  const hasCoordinateVariable = /[xy]/i.test(leftExpression) || /[xy]/i.test(rightExpression);
+  return Boolean(
+    hasCoordinateVariable
+      && isSafeCoordinateExpression(leftExpression)
+      && isSafeCoordinateExpression(rightExpression)
+  );
 }
 
 export function validateGgbCommand(command) {

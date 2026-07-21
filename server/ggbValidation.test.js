@@ -12,7 +12,10 @@ describe("GeoGebra command validation", () => {
     expect(validateGgbCommand("f(x)=x^2-3*x+2").ok).toBe(true);
     expect(validateGgbCommand("g(x)=k*x+b").ok).toBe(true);
     expect(validateGgbCommand("l: y=k*x+b").ok).toBe(true);
+    expect(validateGgbCommand("C: x=y^2/4").ok).toBe(true);
+    expect(validateGgbCommand("C: y^2=4*x").ok).toBe(true);
     expect(validateGgbCommand("P=(t,f(t))").ok).toBe(true);
+    expect(validateGgbCommand("H=(-1,y(M))").ok).toBe(true);
     expect(validateGgbCommand("l=AngleBisector(A,C,B)").ok).toBe(true);
     expect(validateGgbCommand("Prism(Polygon(A,B,C,D), 4)").ok).toBe(true);
     expect(validateGgbCommand("path=Locus(P,Q)").ok).toBe(true);

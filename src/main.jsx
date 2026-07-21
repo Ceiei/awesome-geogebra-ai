@@ -51,8 +51,8 @@ import {
 } from "../shared/teachingDiagramEnhancer.js";
 import "./styles.css";
 
-const HISTORY_KEY = "ggb-ai-history-v4";
-const LEGACY_HISTORY_KEYS = ["ggb-ai-history-v3", "ggb-ai-history-v2", "ggb-ai-history-v1"];
+const HISTORY_KEY = "ggb-ai-history-v6";
+const LEGACY_HISTORY_KEYS = ["ggb-ai-history-v5", "ggb-ai-history-v4", "ggb-ai-history-v3", "ggb-ai-history-v2", "ggb-ai-history-v1"];
 const API_SETTINGS_STORAGE_KEY = "ggb-ai-provider-settings-v1";
 
 const defaultApiSettings = {

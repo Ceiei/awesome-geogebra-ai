@@ -90,6 +90,15 @@ export function buildMockSolveResult(text = "") {
   const isLineFamilyAreaProblem = lower.includes("直线")
     && lower.includes("抛物线")
     && (lower.includes("面积") || lower.includes("三角形") || lower.includes("垂线") || lower.includes("垂足"));
+  const isSidewaysParabolaFocusAreaProblem = (
+    lower.includes("y²")
+    || lower.includes("y^2")
+    || lower.includes("y2")
+  )
+    && lower.includes("4x")
+    && lower.includes("焦点")
+    && lower.includes("准线")
+    && (lower.includes("fab") || lower.includes("三角形") || lower.includes("面积"));
 
   if (!isLineFamilyAreaProblem && (lower.includes("轨迹") || lower.includes("路径") || lower.includes("locus") || lower.includes("path"))) {
     return {
@@ -122,6 +131,63 @@ export function buildMockSolveResult(text = "") {
         { name: "t", description: "动点 P 的位置", min: -3, max: 3, step: 0.1 }
       ],
       viewport: { xmin: -4, xmax: 4, ymin: -1, ymax: 6 },
+      warnings: ["当前启用了 Mock 模式，没有调用 OpenAI。"],
+      followupQuestion: null
+    };
+  }
+
+  if (isSidewaysParabolaFocusAreaProblem) {
+    return {
+      problemSummary: "用滑动条控制过点 T 的直线斜率，观察横向抛物线弦中点轨迹和三角形 FAB 面积变化。",
+      mathType: "analytic_geometry",
+      constructionSteps: [
+        "绘制横向抛物线 C: x = y^2 / 4，并标出焦点 F 与准线。",
+        "创建参数滑动条 t 和 k，分别控制点 T 的横坐标和直线 l 的斜率。",
+        "定义 T=(t,0)，并用两点式构造直线 l: y = k(x-t)。",
+        "标出直线 l 与抛物线 C 的两个交点 A、B。",
+        "构造中点 M，并作 M 到准线 x=-1 的垂线，垂足为 H。",
+        "构造三角形 FAB，用半透明填充显示面积，并绘制 M 随 k 变化的轨迹。"
+      ],
+      ggbCommands: [
+        "t=Slider(0,4,0.1,1,180,false,true,false,false)",
+        "k=Slider(0.4,2.4,0.1,1,180,false,true,false,false)",
+        "C: x=y^2/4",
+        "F=(1,0)",
+        "directrix=Line((-1,-7),(-1,7))",
+        "T=(t,0)",
+        "l=Line(T,(t+1,k))",
+        "A=Intersect(C,l,1)",
+        "B=Intersect(C,l,2)",
+        "M=Midpoint(A,B)",
+        "H=(-1,y(M))",
+        "height=Segment(M,H)",
+        "TriangleFAB=Polygon(F,A,B)",
+        "AreaFAB=Area(TriangleFAB)",
+        "path=Locus(M,k)",
+        "SetColor(C,31,120,83)",
+        "SetLineThickness(C,4)",
+        "SetColor(l,37,99,235)",
+        "SetLineThickness(l,4)",
+        "SetColor(directrix,107,114,128)",
+        "SetLineStyle(directrix,2)",
+        "SetColor(F,220,38,38)",
+        "SetPointSize(F,5)",
+        "SetColor(M,124,58,237)",
+        "SetPointSize(M,5)",
+        "ShowLabel(A,true)",
+        "ShowLabel(B,true)",
+        "ShowLabel(F,true)",
+        "ShowLabel(M,true)",
+        "ShowLabel(H,true)",
+        "Text(\"A、B：直线与抛物线交点\", (-1,6.4))",
+        "Text(\"M：弦 AB 中点，H：到准线的垂足\", (-1,5.8))",
+        "Text(\"△FAB 面积 = \" + AreaFAB, (-1,5.2))"
+      ],
+      dynamicControls: [
+        { name: "t", description: "点 T 的横坐标", min: 0, max: 4, step: 0.1 },
+        { name: "k", description: "直线斜率", min: 0.4, max: 2.4, step: 0.1 }
+      ],
+      viewport: { xmin: -2, xmax: 9, ymin: -7, ymax: 7 },
       warnings: ["当前启用了 Mock 模式，没有调用 OpenAI。"],
       followupQuestion: null
     };
