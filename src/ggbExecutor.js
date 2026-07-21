@@ -96,6 +96,7 @@ function executeStyleCommand(api, command) {
 
   const numericStyleCommands = [
     ["SetFilling", "setFilling"],
+    ["SetLayer", "setLayer"],
     ["SetLineStyle", "setLineStyle"],
     ["SetLineThickness", "setLineThickness"],
     ["SetPointSize", "setPointSize"],

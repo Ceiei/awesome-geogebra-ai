@@ -18,17 +18,40 @@ import {
   Play,
   RefreshCw,
   Upload,
+  Video,
   X,
   ZoomIn,
   ZoomOut
 } from "lucide-react";
 import { executeGgbCommand, get3DCoordinateSystem } from "./ggbExecutor.js";
+import {
+  createDemoVideoBlob,
+  createDemoVideoFilename,
+  getDemoRecordingChecklist,
+  getDemoRecordingErrorMessage,
+  getGgbPngDataUrl,
+  getSupportedDemoVideoMimeType
+} from "./demoVideoExport.js";
+import { getDynamicDemoState } from "./dynamicDemoState.js";
+import {
+  createDynamicDemoPlan,
+  getInitialDynamicControlValue,
+  getSweepValue
+} from "./dynamicDemoTimeline.js";
 import { downloadGgbConstruction, downloadGgbWebPage } from "./ggbDownload.js";
-import { createHistoryCacheKey, findHistoryCacheHit } from "./historyCache.js";
+import { getRenderLogState } from "./renderLogState.js";
+import { createHistoryCacheKey, findHistoryCacheHit, readHistoryItems } from "./historyCache.js";
+import { mergeDynamicControls } from "../shared/dynamicControls.js";
 import { enhanceSolidGeometryCommands } from "../shared/solidGeometryEnhancer.js";
+import {
+  AREA_FILLING,
+  enhanceTeachingDiagramCommands,
+  getHighlightedAreaPolygonLabels
+} from "../shared/teachingDiagramEnhancer.js";
 import "./styles.css";
 
-const HISTORY_KEY = "ggb-ai-history-v1";
+const HISTORY_KEY = "ggb-ai-history-v3";
+const LEGACY_HISTORY_KEYS = ["ggb-ai-history-v2", "ggb-ai-history-v1"];
 const API_SETTINGS_STORAGE_KEY = "ggb-ai-provider-settings-v1";
 
 const defaultApiSettings = {
@@ -129,18 +152,16 @@ const providerPresets = [
 ];
 
 const examples = [
-  "绘制等腰三角形 ABC，其中 AB = AC，并画出顶角的角平分线。",
-  "绘制函数 y = x^2 - 3x + 2，并标出它与 x 轴的交点。",
-  "已知圆心 O 和圆上一点 A，绘制点 A 处的切线。",
-  "用二维斜投影绘制正方体 ABCD-A'B'C'D'，标出体对角线 AC' 和底面对角线 AC。"
+  "设点 P 在抛物线 y=x^2/2 上运动，观察三角形 ABP 的面积变化。",
+  "点 P 在抛物线 y=x^2/2 上运动，取 AP 中点 M，观察 M 的轨迹。"
 ];
 
 function readHistory() {
-  try {
-    return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
-  } catch {
-    return [];
-  }
+  return readHistoryItems(localStorage, {
+    primaryKey: HISTORY_KEY,
+    legacyKeys: LEGACY_HISTORY_KEYS,
+    limit: 8
+  });
 }
 
 function writeHistory(items) {
@@ -180,16 +201,147 @@ function getFreePointLabels(commands) {
   ));
 }
 
+function formatControlValue(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return String(value ?? "");
+  return Number(number.toFixed(4)).toString();
+}
+
+function formatDynamicControlLabel(control) {
+  const description = String(control.description || "");
+  const movingPoint = description.match(/动点\s*([A-Za-z][A-Za-z0-9_]*)/);
+  if (movingPoint) return `动点${movingPoint[1]}`;
+  if (/斜率|slope/i.test(description)) return "斜率";
+  if (/截距|intercept/i.test(description)) return "截距";
+  if (/角|旋转|angle/i.test(description)) return "角度";
+  return description || control.name;
+}
+
+function sleep(milliseconds) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function loadImageFromDataUrl(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("演示帧加载失败"));
+    image.src = dataUrl;
+  });
+}
+
+async function drawGgbFrameToCanvas(api, canvas) {
+  const image = await loadImageFromDataUrl(await getGgbPngDataUrl(api));
+  const width = Math.max(1, image.naturalWidth || image.width);
+  const height = Math.max(1, image.naturalHeight || image.height);
+  if (canvas.width !== width) canvas.width = width;
+  if (canvas.height !== height) canvas.height = height;
+
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, width, height);
+  context.drawImage(image, 0, 0, width, height);
+}
+
+function applyDynamicVisualFixes(api, { areaLabels = [], dynamicControls = [] }) {
+  for (const control of dynamicControls) {
+    try {
+      api.setVisible?.(control.name, false);
+    } catch {
+      // GeoGebra may reject visibility changes while a slider is still being created.
+    }
+  }
+
+  for (const label of areaLabels) {
+    try {
+      api.setVisible?.(label, true);
+      api.setLayer?.(label, 0);
+      api.setFilling?.(label, AREA_FILLING);
+      api.setColor?.(label, 96, 165, 250);
+      api.setLineThickness?.(label, 3);
+    } catch {
+      // The command list already contains the same styling; this only reinforces it after repaint.
+    }
+  }
+}
+
+function getRenderSignature(result, viewMode) {
+  if (!result) return "";
+  return JSON.stringify({
+    viewMode,
+    mathType: result.mathType,
+    commands: result.ggbCommands || [],
+    dynamicControls: result.dynamicControls || [],
+    viewport: result.viewport || null
+  });
+}
+
 function GeoGebraCanvas({ result, renderRequest }) {
   const containerRef = useRef(null);
   const shellRef = useRef(null);
   const appletRef = useRef(null);
+  const demoRunRef = useRef(0);
   const [status, setStatus] = useState("正在加载 GeoGebra...");
   const [commandResults, setCommandResults] = useState([]);
+  const [isRenderLogExpanded, setIsRenderLogExpanded] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [viewMode, setViewMode] = useState("2d");
   const [appletReadyVersion, setAppletReadyVersion] = useState(0);
   const [isDownloadMenuOpen, setIsDownloadMenuOpen] = useState(false);
+  const [dynamicValues, setDynamicValues] = useState({});
+  const [isRecordingDemo, setIsRecordingDemo] = useState(false);
+  const [isRecordGuideOpen, setIsRecordGuideOpen] = useState(false);
+  const [isPlayingDemo, setIsPlayingDemo] = useState(false);
+  const [lastRenderedSignature, setLastRenderedSignature] = useState("");
+  const [demoFocusControl, setDemoFocusControl] = useState(null);
+  const currentRenderSignature = getRenderSignature(result, viewMode);
+  const supportsFrameVideoExport = Boolean(
+    appletRef.current?.getPNGBase64
+    && typeof HTMLCanvasElement !== "undefined"
+    && HTMLCanvasElement.prototype.captureStream
+    && typeof MediaRecorder !== "undefined"
+  );
+  const supportsScreenRecording = Boolean(navigator.mediaDevices?.getDisplayMedia && typeof MediaRecorder !== "undefined");
+  const supportsDemoRecording = supportsFrameVideoExport || supportsScreenRecording;
+  const demoState = getDynamicDemoState({
+    supportsRecording: supportsDemoRecording,
+    directExport: supportsFrameVideoExport,
+    hasRenderedCurrent: Boolean(commandResults.length && lastRenderedSignature === currentRenderSignature),
+    isPlaying: isPlayingDemo,
+    isRecording: isRecordingDemo
+  });
+  const canPlayDemo = demoState.canPlay;
+  const demoFocusLabel = demoFocusControl ? formatDynamicControlLabel(demoFocusControl) : "";
+  const demoFocusValue = demoFocusControl
+    ? dynamicValues[demoFocusControl.name] ?? getInitialDynamicControlValue(demoFocusControl)
+    : undefined;
+  const renderLogState = getRenderLogState(commandResults);
+  const shouldShowRenderLogDetails = isRenderLogExpanded || renderLogState.defaultExpanded;
+  const renderLogEntries = renderLogState.defaultExpanded ? renderLogState.visibleEntries : commandResults.slice(-8);
+
+  useEffect(() => {
+    demoRunRef.current += 1;
+    setIsPlayingDemo(false);
+    setIsRecordingDemo(false);
+    setIsRecordGuideOpen(false);
+    setDemoFocusControl(null);
+    const nextValues = {};
+    for (const control of result?.dynamicControls || []) {
+      nextValues[control.name] = getInitialDynamicControlValue(control);
+    }
+    setDynamicValues(nextValues);
+  }, [result, viewMode]);
 
   function resizeApplet() {
     const container = containerRef.current;
@@ -271,11 +423,18 @@ function GeoGebraCanvas({ result, renderRequest }) {
 
   useEffect(() => {
     if (!renderRequest || !result || !appletRef.current) return;
+    demoRunRef.current += 1;
+    setIsPlayingDemo(false);
+    setIsRecordingDemo(false);
+    setIsRecordGuideOpen(false);
+    setDemoFocusControl(null);
 
     const api = appletRef.current;
     const nextCommandResults = [];
     let objectNames = [];
     let repaintingPaused = false;
+    let areaHighlightLabels = [];
+    const dynamicControls = result.dynamicControls || [];
 
     try {
       api.setRepaintingActive(false);
@@ -306,10 +465,14 @@ function GeoGebraCanvas({ result, renderRequest }) {
         );
       }
 
-      const commandsToRender = enhanceSolidGeometryCommands({
+      const commandsToRender = enhanceTeachingDiagramCommands({
         mathType: result.mathType,
-        commands: result.ggbCommands
+        commands: enhanceSolidGeometryCommands({
+          mathType: result.mathType,
+          commands: result.ggbCommands
+        })
       });
+      areaHighlightLabels = getHighlightedAreaPolygonLabels({ mathType: result.mathType, commands: commandsToRender });
       for (const command of commandsToRender) {
         nextCommandResults.push(executeGgbCommand(api, command));
       }
@@ -318,6 +481,7 @@ function GeoGebraCanvas({ result, renderRequest }) {
       for (const objectName of objectNames) {
         api.setVisible?.(objectName, true);
       }
+      applyDynamicVisualFixes(api, { areaLabels: areaHighlightLabels, dynamicControls });
       for (const pointLabel of getFreePointLabels(commandsToRender)) {
         try {
           api.setFixed?.(pointLabel, false, true);
@@ -326,15 +490,33 @@ function GeoGebraCanvas({ result, renderRequest }) {
         }
       }
       api.setMode?.(0);
+      for (const control of dynamicControls) {
+        const value = getInitialDynamicControlValue(control);
+        try {
+          api.setValue?.(control.name, value);
+        } catch {
+          // Keep the construction usable even if a generated slider name is missing.
+        }
+      }
+      const hasRenderedObject = Boolean(objectNames.length || nextCommandResults.some((item) => item.ok));
       setCommandResults(nextCommandResults);
-      setStatus(objectNames.length || nextCommandResults.some((item) => item.ok) ? "已绘制" : "未生成可见对象");
+      setIsRenderLogExpanded(false);
+      setLastRenderedSignature(hasRenderedObject ? currentRenderSignature : "");
+      setStatus(hasRenderedObject ? "已绘制" : "未生成可见对象");
     } catch (error) {
       setStatus(error.message || "GeoGebra 绘制失败");
       setCommandResults(nextCommandResults);
+      setIsRenderLogExpanded(false);
+      setLastRenderedSignature("");
     } finally {
       try {
         if (repaintingPaused) api.setRepaintingActive(true);
+        applyDynamicVisualFixes(api, { areaLabels: areaHighlightLabels, dynamicControls });
         api.refreshViews();
+        window.setTimeout(() => {
+          applyDynamicVisualFixes(api, { areaLabels: areaHighlightLabels, dynamicControls });
+          api.refreshViews?.();
+        }, 120);
       } catch {
         // Do not overwrite a more specific drawing status when the final refresh is unavailable.
       }
@@ -362,9 +544,16 @@ function GeoGebraCanvas({ result, renderRequest }) {
 
   function resetCanvas() {
     if (!appletRef.current) return;
+    demoRunRef.current += 1;
+    setIsPlayingDemo(false);
+    setIsRecordingDemo(false);
+    setIsRecordGuideOpen(false);
+    setDemoFocusControl(null);
     appletRef.current.newConstruction();
     appletRef.current.setCoordSystem(-8, 8, -6, 6);
     setCommandResults([]);
+    setIsRenderLogExpanded(false);
+    setLastRenderedSignature("");
     setStatus("已就绪");
   }
 
@@ -376,6 +565,312 @@ function GeoGebraCanvas({ result, renderRequest }) {
       appletRef.current.refreshViews();
     } catch {
       setStatus("缩放操作暂不可用");
+    }
+  }
+
+  function updateDynamicControl(control, rawValue) {
+    const value = Number(rawValue);
+    setDynamicValues((current) => ({ ...current, [control.name]: value }));
+
+    try {
+      appletRef.current?.setValue?.(control.name, value);
+      appletRef.current?.refreshViews?.();
+      setStatus(`已更新参数 ${control.name}=${value}`);
+    } catch {
+      setStatus(`参数 ${control.name} 暂不可用，请先绘制图像`);
+    }
+  }
+
+  function resetDynamicControls() {
+    const controls = result?.dynamicControls || [];
+    if (!controls.length) return;
+
+    const nextValues = {};
+    for (const control of controls) {
+      const value = getInitialDynamicControlValue(control);
+      nextValues[control.name] = value;
+      try {
+        appletRef.current?.setValue?.(control.name, value);
+      } catch {
+        // A missing generated slider should not block resetting the rest.
+      }
+    }
+    setDynamicValues(nextValues);
+    appletRef.current?.refreshViews?.();
+    setStatus("动态演示已复位");
+  }
+
+  function setDynamicControlValues(values) {
+    const api = appletRef.current;
+
+    setDynamicValues((current) => ({ ...current, ...values }));
+    for (const [name, value] of Object.entries(values)) {
+      try {
+        api?.setValue?.(name, value);
+      } catch {
+        // Continue updating other generated controls when one slider is missing.
+      }
+    }
+    api?.refreshViews?.();
+  }
+
+  function createDemoRunToken() {
+    demoRunRef.current += 1;
+    return demoRunRef.current;
+  }
+
+  function isDemoRunCurrent(token) {
+    return demoRunRef.current === token;
+  }
+
+  async function sweepDynamicControl(control, durationMs, token) {
+    const start = performance.now();
+
+    return new Promise((resolve) => {
+      function frame(now) {
+        if (!isDemoRunCurrent(token)) {
+          resolve(false);
+          return;
+        }
+
+        const progress = Math.min(1, (now - start) / durationMs);
+        const value = getSweepValue(control, progress);
+        if (value !== null) setDynamicControlValues({ [control.name]: value });
+
+        if (progress < 1) {
+          window.requestAnimationFrame(frame);
+        } else {
+          resolve(true);
+        }
+      }
+
+      window.requestAnimationFrame(frame);
+    });
+  }
+
+  async function playDynamicDemoSequence(controls, token) {
+    const plan = createDynamicDemoPlan(controls);
+    const { defaults } = plan;
+    setDynamicControlValues(defaults);
+    await sleep(300);
+    if (!isDemoRunCurrent(token)) return false;
+
+    for (const { control, durationMs } of plan.steps) {
+      const label = formatDynamicControlLabel(control);
+      if (!isDemoRunCurrent(token)) return false;
+      setDynamicControlValues(defaults);
+      setDemoFocusControl(control);
+      setStatus(`正在演示：${label}`);
+      await sleep(250);
+      if (!isDemoRunCurrent(token)) return false;
+      const didFinishSweep = await sweepDynamicControl(control, durationMs, token);
+      if (!didFinishSweep) return false;
+      await sleep(250);
+    }
+
+    if (!isDemoRunCurrent(token)) return false;
+    setDemoFocusControl(null);
+    setDynamicControlValues(defaults);
+    return true;
+  }
+
+  async function previewDynamicDemo() {
+    const controls = result?.dynamicControls || [];
+    if (!controls.length || isPlayingDemo || isRecordingDemo) return;
+    if (!appletRef.current) {
+      setStatus("请先等待 GeoGebra 画布加载完成");
+      return;
+    }
+    if (!canPlayDemo) {
+      setStatus("当前方案尚未绘制，请先点击“绘制到 GeoGebra”");
+      return;
+    }
+
+    const token = createDemoRunToken();
+    try {
+      setIsPlayingDemo(true);
+      setStatus("正在播放动态演示...");
+      const didFinish = await playDynamicDemoSequence(controls, token);
+      setStatus(didFinish ? "动态演示播放完成" : "动态演示已取消");
+    } catch {
+      setStatus("播放动态演示失败");
+    } finally {
+      if (isDemoRunCurrent(token)) {
+        setIsPlayingDemo(false);
+        setDemoFocusControl(null);
+      }
+    }
+  }
+
+  async function exportDynamicDemoFromFrames() {
+    const controls = result?.dynamicControls || [];
+    const api = appletRef.current;
+    if (!controls.length || isPlayingDemo || isRecordingDemo || !api?.getPNGBase64) return false;
+    if (!canPlayDemo) {
+      setStatus("当前方案尚未绘制，请先点击“绘制到 GeoGebra”");
+      return true;
+    }
+    if (typeof HTMLCanvasElement === "undefined" || !HTMLCanvasElement.prototype.captureStream || typeof MediaRecorder === "undefined") {
+      return false;
+    }
+
+    const wasFullscreen = isFullscreen;
+    const token = createDemoRunToken();
+    const canvas = document.createElement("canvas");
+    const chunks = [];
+    let stream;
+    let recorder;
+
+    try {
+      setIsRecordingDemo(true);
+      setIsFullscreen(true);
+      setStatus("正在生成动态演示视频...");
+      await sleep(220);
+      resizeApplet();
+
+      const plan = createDynamicDemoPlan(controls);
+      setDynamicControlValues(plan.defaults);
+      await sleep(180);
+      await drawGgbFrameToCanvas(api, canvas);
+
+      stream = canvas.captureStream(20);
+      const mimeType = getSupportedDemoVideoMimeType(MediaRecorder);
+      recorder = new MediaRecorder(stream, { mimeType });
+      const stopped = new Promise((resolve) => {
+        recorder.onstop = resolve;
+      });
+      recorder.ondataavailable = (event) => {
+        if (event.data?.size) chunks.push(event.data);
+      };
+      recorder.start(250);
+
+      for (const { control, durationMs } of plan.steps) {
+        if (!isDemoRunCurrent(token)) return true;
+
+        const label = formatDynamicControlLabel(control);
+        setDemoFocusControl(control);
+        setStatus(`正在生成演示：${label}`);
+        const frameCount = Math.max(24, Math.min(72, Math.round(durationMs / 120)));
+
+        for (let frameIndex = 0; frameIndex <= frameCount; frameIndex += 1) {
+          if (!isDemoRunCurrent(token)) return true;
+          const progress = frameIndex / frameCount;
+          const value = getSweepValue(control, progress);
+          if (value !== null) setDynamicControlValues({ [control.name]: value });
+          await sleep(45);
+          await drawGgbFrameToCanvas(api, canvas);
+        }
+      }
+
+      setDemoFocusControl(null);
+      setDynamicControlValues(plan.defaults);
+      await sleep(180);
+      await drawGgbFrameToCanvas(api, canvas);
+
+      recorder.stop();
+      await stopped;
+      downloadBlob(createDemoVideoBlob(chunks, recorder.mimeType || getSupportedDemoVideoMimeType(MediaRecorder)), createDemoVideoFilename());
+      resetDynamicControls();
+      setStatus("已导出演示视频");
+      return true;
+    } catch (error) {
+      setStatus(getDemoRecordingErrorMessage(error));
+      return true;
+    } finally {
+      if (recorder?.state === "recording") recorder.stop();
+      stream?.getTracks().forEach((track) => track.stop());
+      if (isDemoRunCurrent(token)) {
+        setIsRecordingDemo(false);
+        setDemoFocusControl(null);
+      }
+      if (!wasFullscreen) setIsFullscreen(false);
+    }
+  }
+
+  async function recordDynamicDemo() {
+    const controls = result?.dynamicControls || [];
+    if (!controls.length || isPlayingDemo || isRecordingDemo) return;
+    if (!canPlayDemo) {
+      setStatus("当前方案尚未绘制，请先点击“绘制到 GeoGebra”");
+      return;
+    }
+    if (supportsFrameVideoExport && await exportDynamicDemoFromFrames()) return;
+    if (!navigator.mediaDevices?.getDisplayMedia || typeof MediaRecorder === "undefined") {
+      setStatus("当前浏览器不支持直接录制演示视频");
+      return;
+    }
+
+    setIsRecordGuideOpen(true);
+  }
+
+  async function startDynamicDemoRecording() {
+    const controls = result?.dynamicControls || [];
+    if (!controls.length || isPlayingDemo) return;
+    if (!appletRef.current) {
+      setStatus("请先等待 GeoGebra 画布加载完成");
+      return;
+    }
+    if (!canPlayDemo) {
+      setStatus("当前方案尚未绘制，请先点击“绘制到 GeoGebra”");
+      return;
+    }
+    if (!navigator.mediaDevices?.getDisplayMedia || typeof MediaRecorder === "undefined") {
+      setStatus("当前浏览器不支持直接录制演示视频");
+      return;
+    }
+
+    setIsRecordGuideOpen(false);
+    setStatus("请选择当前网页或浏览器标签页进行录制");
+    let stream;
+    const wasFullscreen = isFullscreen;
+    const token = createDemoRunToken();
+    try {
+      setIsFullscreen(true);
+      await sleep(180);
+      resizeApplet();
+      stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: 30 },
+        audio: false
+      });
+
+      const chunks = [];
+      const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
+        ? "video/webm;codecs=vp9"
+        : "video/webm";
+      const recorder = new MediaRecorder(stream, { mimeType });
+      const stopped = new Promise((resolve) => {
+        recorder.onstop = resolve;
+      });
+
+      recorder.ondataavailable = (event) => {
+        if (event.data?.size) chunks.push(event.data);
+      };
+
+      setIsRecordingDemo(true);
+      recorder.start(250);
+      setStatus("正在录制动态演示...");
+      const didFinish = await playDynamicDemoSequence(controls, token);
+      await sleep(350);
+      recorder.stop();
+      await stopped;
+      if (!didFinish || !isDemoRunCurrent(token)) {
+        setStatus("演示已取消，未导出视频");
+        return;
+      }
+
+      downloadBlob(createDemoVideoBlob(chunks, mimeType), createDemoVideoFilename());
+      resetDynamicControls();
+      setStatus("已导出演示视频");
+    } catch (error) {
+      setStatus(getDemoRecordingErrorMessage(error));
+    } finally {
+      if (isDemoRunCurrent(token)) {
+        setIsRecordingDemo(false);
+        setIsRecordGuideOpen(false);
+        setDemoFocusControl(null);
+      }
+      if (!wasFullscreen) setIsFullscreen(false);
+      stream?.getTracks().forEach((track) => track.stop());
     }
   }
 
@@ -395,7 +890,7 @@ function GeoGebraCanvas({ result, renderRequest }) {
   }
 
   return (
-    <section className={`panel canvas-panel${isFullscreen ? " canvas-panel-fullscreen" : ""}`}>
+    <section className={`panel canvas-panel${isFullscreen ? " canvas-panel-fullscreen" : ""}${isRecordingDemo ? " is-recording-demo" : ""}`}>
       <div className="panel-header">
         <div>
           <h2>GeoGebra 画布</h2>
@@ -463,14 +958,126 @@ function GeoGebraCanvas({ result, renderRequest }) {
       </div>
       <div className="ggb-shell" ref={shellRef}>
         <div id="ggb-canvas" ref={containerRef} />
+        {(isRecordingDemo || isPlayingDemo) && demoFocusLabel ? (
+          <div className="demo-focus-badge">
+            演示：{demoFocusLabel}
+            {demoFocusControl ? (
+              <span>{demoFocusControl.name}={formatControlValue(demoFocusValue)}</span>
+            ) : null}
+          </div>
+        ) : null}
       </div>
-      <div className="render-log">
-        <span>{commandResults.length ? "绘制日志" : "绘制后可拖动、缩放，并下载 GGB 或网页文件。"}</span>
-        {commandResults.slice(-5).map((entry) => (
-          <span className={entry.ok ? "log-ok" : "log-fail"} key={entry.command}>
-            {entry.ok ? "成功" : "失败"}: {entry.command}
-          </span>
-        ))}
+      {result?.dynamicControls?.length ? (
+        <div className="canvas-dynamic-controls" aria-label="动态演示控制">
+          <div className="canvas-dynamic-header">
+            <span>动态演示</span>
+            <div className="canvas-dynamic-actions">
+              <button
+                type="button"
+                onClick={previewDynamicDemo}
+                disabled={demoState.play.disabled}
+                title={demoState.play.title}
+              >
+                {isPlayingDemo ? <Loader2 className="spin" size={13} /> : <Play size={13} />}
+                {demoState.play.text}
+              </button>
+              <button
+                type="button"
+                onClick={recordDynamicDemo}
+                disabled={demoState.record.disabled}
+                title={demoState.record.title}
+              >
+                {isRecordingDemo ? <Loader2 className="spin" size={13} /> : <Video size={13} />}
+                {demoState.record.text}
+              </button>
+              <button type="button" onClick={resetDynamicControls} disabled={demoState.reset.disabled}>
+                <RefreshCw size={13} />
+                复位
+              </button>
+            </div>
+          </div>
+          {result.dynamicControls.map((control) => {
+            const value = dynamicValues[control.name] ?? getInitialDynamicControlValue(control);
+            const label = formatDynamicControlLabel(control);
+            return (
+              <label className="canvas-dynamic-control" key={`${control.name}-${control.min}-${control.max}`}>
+                <span className="canvas-dynamic-label">
+                  <span className="canvas-dynamic-name">{label}</span>
+                  <strong>{control.name}</strong>
+                </span>
+                <input
+                  type="range"
+                  min={control.min}
+                  max={control.max}
+                  step={control.step}
+                  value={value}
+                  onInput={(event) => updateDynamicControl(control, event.currentTarget.value)}
+                  onChange={(event) => updateDynamicControl(control, event.target.value)}
+                  disabled={demoState.sliderDisabled}
+                  aria-label={label}
+                />
+                <output>{formatControlValue(value)}</output>
+              </label>
+            );
+          })}
+        </div>
+      ) : null}
+      {isRecordGuideOpen ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setIsRecordGuideOpen(false)}>
+          <section
+            className="recording-guide-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="recording-guide-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="modal-header">
+              <div>
+                <h2 id="recording-guide-title">导出演示视频</h2>
+                <p>接下来会调用浏览器录屏权限，自动录制滑动条演示过程。</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setIsRecordGuideOpen(false)} title="关闭">
+                <X size={17} />
+              </button>
+            </div>
+            <div className="recording-guide-body">
+              <AlertTriangle size={18} />
+              <div>
+                <strong>请选择“当前标签页”或当前浏览器窗口</strong>
+                <ul>
+                  {getDemoRecordingChecklist().map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+            <div className="api-key-actions">
+              <button className="secondary-button" type="button" onClick={() => setIsRecordGuideOpen(false)}>
+                取消
+              </button>
+              <button className="primary-button compact" type="button" onClick={startDynamicDemoRecording}>
+                开始录制
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+      <div className={`render-log render-log-${renderLogState.tone}`}>
+        <span className="render-log-summary">{renderLogState.summary}</span>
+        {commandResults.length ? (
+          <button type="button" onClick={() => setIsRenderLogExpanded((value) => !value)}>
+            {shouldShowRenderLogDetails ? "收起日志" : "查看日志"}
+          </button>
+        ) : null}
+        {shouldShowRenderLogDetails ? (
+          <div className="render-log-details">
+            {renderLogEntries.map((entry) => (
+              <span className={entry.ok ? "log-ok" : "log-fail"} key={entry.command}>
+                {entry.ok ? "成功" : "失败"}: {entry.command}
+              </span>
+            ))}
+          </div>
+        ) : null}
       </div>
     </section>
   );
@@ -748,7 +1355,7 @@ function InputPanel({ onSolved, onReuseHistory, history, activeText, setActiveTe
           </div>
           <div>
             <h1>GeoGebra <span>AI</span></h1>
-            <p>解析题目 · 编辑步骤 · 交互绘图</p>
+            <p>解析题目 · 动态演示 · 导出视频</p>
           </div>
         </div>
         <ApiKeySettings />
@@ -872,6 +1479,11 @@ function PreviewPanel({
           <div className="summary-card">
             <span className="type-badge">{formatMathType(result.mathType)}</span>
             <h3>{result.problemSummary || "未返回题目摘要"}</h3>
+            {result.dynamicControls?.length ? (
+              <p className="dynamic-summary">
+                含 {result.dynamicControls.length} 个动态参数，可播放并导出演示。
+              </p>
+            ) : null}
             {result.followupQuestion ? <p className="followup">{result.followupQuestion}</p> : null}
           </div>
 
@@ -1113,7 +1725,11 @@ function App() {
       ? {
         ...current,
         ggbCommands: commands,
-        rejectedCommands: []
+        rejectedCommands: [],
+        dynamicControls: mergeDynamicControls({
+          commands,
+          dynamicControls: current.dynamicControls
+        })
       }
       : current);
   }

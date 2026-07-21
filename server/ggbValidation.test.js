@@ -10,11 +10,21 @@ describe("GeoGebra command validation", () => {
     expect(validateGgbCommand("A=(2*sqrt(2), 0, 0)").ok).toBe(true);
     expect(validateGgbCommand("B=(a/2, cos(45°), pi)").ok).toBe(true);
     expect(validateGgbCommand("f(x)=x^2-3*x+2").ok).toBe(true);
+    expect(validateGgbCommand("g(x)=k*x+b").ok).toBe(true);
+    expect(validateGgbCommand("l: y=k*x+b").ok).toBe(true);
+    expect(validateGgbCommand("P=(t,f(t))").ok).toBe(true);
     expect(validateGgbCommand("l=AngleBisector(A,C,B)").ok).toBe(true);
     expect(validateGgbCommand("Prism(Polygon(A,B,C,D), 4)").ok).toBe(true);
+    expect(validateGgbCommand("path=Locus(P,Q)").ok).toBe(true);
+    expect(validateGgbCommand("t=Slider(-3,3,0.1,1,180,false,true,false,false)").ok).toBe(true);
+    expect(validateGgbCommand("Slider(t, -3, 3, 0.1, 1, false, true, false, false)")).toEqual({
+      ok: true,
+      command: "t=Slider(-3, 3, 0.1, 1, false, true, false, false)"
+    });
     expect(validateGgbCommand("Sphere(P, 3)").ok).toBe(true);
     expect(validateGgbCommand("SetColor(l, 220, 38, 38)").ok).toBe(true);
     expect(validateGgbCommand('SetColor(l, "Red")').ok).toBe(true);
+    expect(validateGgbCommand("SetLayer(l,0)").ok).toBe(true);
     expect(validateGgbCommand('Text["距离 = " + dist, (3, 3, 2)]')).toEqual({
       ok: true,
       command: 'Text("距离 = " + dist, (3, 3, 2))'
@@ -28,6 +38,7 @@ describe("GeoGebra command validation", () => {
     expect(validateGgbCommand("A=(0,0); Delete(A)").ok).toBe(false);
     expect(validateGgbCommand("A=(Execute(\"Delete(A)\"),0,0)").ok).toBe(false);
     expect(validateGgbCommand("A=(UnknownCommand(1),0,0)").ok).toBe(false);
+    expect(validateGgbCommand("l: y=UnknownCommand(1)").ok).toBe(false);
     expect(validateGgbCommand("unsafe=RunClickScript(A, \"x\")").ok).toBe(false);
   });
 

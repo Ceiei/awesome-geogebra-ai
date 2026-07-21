@@ -94,6 +94,16 @@ function buildSystemPrompt() {
     "Use English GeoGebra command names.",
     "Use parentheses (...) for GeoGebra command calls, never square brackets. Define every referenced object before it is used; for example, create dist=Distance(D, plane) before Text(\"距离 = \" + dist, (3,3,2)).",
     "The output should be a clean high-school teaching diagram, not just executable commands. Prioritize clarity, low visual clutter, stable labels, and objects that a teacher can drag and inspect during class.",
+    "Always first solve the user's original request as a static teaching diagram. Then decide whether the static construction contains an implicit variable object that a teacher would naturally want to drag: a point constrained to a curve, an arbitrary point, a variable slope, a variable intercept, a secant/tangent position, a parameter family, an area/length changing with a position, or a locus-related setup. If so, add one or two native GeoGebra sliders even when the user did not explicitly ask for animation.",
+    "Choose dynamic sliders by teaching value, not by every symbol in the problem. A key movable parameter is one whose movement directly explains the theorem, area/length change, slope relationship, tangent/secant transition, locus, or extremum being discussed.",
+    "For these implicit dynamic cases, use commands such as t=Slider(min,max,step,1,160,false,true,false,false), then define dependent objects from that parameter: P=(t,f(t)), a line with slope k, a moving secant point, a polygon, an area, or explanatory text. The Slider label must be assigned before the command, e.g. t=Slider(...); never write Slider(t,...). The diagram must still be meaningful at the default slider value. Do not use JavaScript animation.",
+    "Expose only parameters that are useful for classroom demonstration. Do not create sliders for fixed constants such as a base half-length, a radius, or a given coefficient unless the problem explicitly asks how that constant varies.",
+    "For dynamicControls descriptions, use teacher-facing labels such as '动点 P 的位置', '直线斜率', or '切点位置', not abstract labels like 'parameter t'.",
+    "When a dynamic parameter changes a target object, add only the auxiliary objects that make that effect observable: projection lines for coordinates/heights, a highlighted triangle or quadrilateral for area, a secant/tangent line for slope, a trace/locus helper for path, or a short Text value for the changing measurement.",
+    "For line-family demonstrations such as y=k*x+b, expose k and b as sliders with dynamicControls descriptions '直线斜率' and '直线截距'. Define the line as l=Line((0,b),(1,k+b)) or l: y=k*x+b, then mark relevant intersections and add a short slopeLine helper if it helps classroom explanation.",
+    "For slope, secant, or tangent demonstrations, name helper lines consistently so the app can style them: secant=Line(...), tangent=Line(...), or slopeLine=Segment(...).",
+    "For locus or path demonstrations, name the trajectory helper consistently so the app can style it: locus=Locus(...), path=Locus(...), or trace=Locus(...).",
+    "When the task asks for or implies area, create a named Polygon for the target region, compute Area(polygon), and style the region with translucent filling so the area is visually obvious. If the area is controlled by a moving point P relative to a fixed base or axis, also draw the base and a projection/height helper such as H=(t,0), h=Segment(P,H), then style h as a blue dashed helper.",
     "For the angle between a line and a plane in 3D, use Angle(Line(D,E), plane) after defining the plane. Do not use a separately constructed normal vector or Angle(Vector(...), Vector(...)) for this purpose.",
     "For a prism or polyhedron, explicitly draw every edge with named Segment commands before adding auxiliary planes. Use an infinite Plane only for calculations, then hide it. For a visible auxiliary plane, draw the corresponding finite Polygon face with filling at most 0.04 so it cannot obscure the solid.",
     "In 3D, do not use Text to repeat point names such as Text(\"A\", A, true) or Text(\"B₁\", B1, true); GeoGebra point labels already do this. Use Text only for meaningful explanations such as a distance value.",
@@ -110,7 +120,8 @@ function buildSystemPrompt() {
 function buildJsonInstruction() {
   return [
     "请只返回一个 JSON 对象，不要使用 Markdown 代码块。",
-    "JSON 字段必须包含：problemSummary, mathType, constructionSteps, ggbCommands, viewport, warnings, followupQuestion。",
+    "JSON 字段必须包含：problemSummary, mathType, constructionSteps, ggbCommands, dynamicControls, viewport, warnings, followupQuestion。",
+    "dynamicControls 必须包含所有滑动条参数；如果题目存在可自然拖动观察的点或参数，即使用户没有要求动态演示，也要返回对应滑动条；确实没有动态演示时返回空数组。",
     "mathType 只能是 geometry、function、analytic_geometry 或 solid_geometry。",
     "viewport 必须包含 xmin、xmax、ymin、ymax 四个数字。",
     "ggbCommands 必须是字符串数组，每个字符串是一条 GeoGebra 命令。"
@@ -120,6 +131,7 @@ function buildJsonInstruction() {
 function buildCommandUserText({ problemSummary, mathType, constructionSteps, viewport }) {
   return [
     "请根据用户修订后的构造步骤，重新生成完整 GeoGebra 命令。",
+    "如果修订步骤体现可变点、任意点、参数、面积变化、斜率变化、轨迹或切割过程，应生成 GeoGebra 原生 Slider 滑动条和依赖对象；即使步骤没有明确说“动态演示”，也要为自然可变对象补滑动条。",
     "不要重新解释题目，不要省略已需要的基础对象定义。",
     "如果步骤中提到点、线段、平面、函数、角度、距离或辅助对象，必须先定义对象再使用。",
     "",

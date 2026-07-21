@@ -41,12 +41,20 @@ describe("GeoGebra command executor", () => {
     expect(api.evalCommand).not.toHaveBeenCalled();
   });
 
-  it("handles captions and fixed-object settings through the Apps API", () => {
-    const api = { isDefined: vi.fn(() => true), setCaption: vi.fn(), setFixed: vi.fn(), evalCommand: vi.fn() };
+  it("handles captions, layers, and fixed-object settings through the Apps API", () => {
+    const api = {
+      isDefined: vi.fn(() => true),
+      setCaption: vi.fn(),
+      setFixed: vi.fn(),
+      setLayer: vi.fn(),
+      evalCommand: vi.fn()
+    };
 
     expect(executeGgbCommand(api, 'SetCaption(A, "顶点 A")').ok).toBe(true);
+    expect(executeGgbCommand(api, "SetLayer(A,0)").ok).toBe(true);
     expect(executeGgbCommand(api, "SetFixed(A,true,false)").ok).toBe(true);
     expect(api.setCaption).toHaveBeenCalledWith("A", "顶点 A");
+    expect(api.setLayer).toHaveBeenCalledWith("A", 0);
     expect(api.setFixed).toHaveBeenCalledWith("A", true, false);
     expect(api.evalCommand).not.toHaveBeenCalled();
   });

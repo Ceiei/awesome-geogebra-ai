@@ -33,6 +33,7 @@ const allowedCommandNames = new Set([
   "Function",
   "Intersect",
   "Line",
+  "Locus",
   "Midpoint",
   "OrthogonalLine",
   "ParallelLine",
@@ -48,6 +49,7 @@ const allowedCommandNames = new Set([
   "Root",
   "Segment",
   "Semicircle",
+  "Slider",
   "Sphere",
   "Tangent",
   "Tetrahedron",
@@ -63,6 +65,7 @@ const allowedStyleCommands = new Set([
   "SetFixed",
   "SetLabelMode",
   "SetLabelStyle",
+  "SetLayer",
   "SetLineStyle",
   "SetLineThickness",
   "SetPointSize",
@@ -110,6 +113,14 @@ function normalizeOuterCommandBrackets(command) {
   return `${command.slice(0, openingBracket)}(${command.slice(openingBracket + 1, -1)})`;
 }
 
+function normalizeSliderCommand(command) {
+  const match = command.match(/^\s*Slider\s*\(\s*([A-Za-z][A-Za-z0-9_]*)\s*,\s*([\s\S]+)\)\s*$/);
+  if (!match) return command;
+
+  const [, label, rest] = match;
+  return `${label}=Slider(${rest.trim()})`;
+}
+
 function getCommandCallName(command) {
   const assignmentMatch = command.match(/^\s*(?:[A-Za-z][A-Za-z0-9_]*\s*=\s*)?([A-Za-z][A-Za-z0-9_]*)\s*(?:\(|\[)/);
   return assignmentMatch?.[1] ?? null;
@@ -147,7 +158,9 @@ function isSafeCoordinateExpression(expression) {
 
   const functionNames = expression.matchAll(/([A-Za-z][A-Za-z0-9_]*)\s*\(/g);
   for (const match of functionNames) {
-    if (!allowedCoordinateFunctions.has(match[1].toLowerCase())) return false;
+    const rawFunctionName = match[1];
+    const functionName = rawFunctionName.toLowerCase();
+    if (!allowedCoordinateFunctions.has(functionName) && !/^[a-z][A-Za-z0-9_]*$/.test(rawFunctionName)) return false;
   }
 
   return true;
@@ -171,11 +184,17 @@ function looksLikePointAssignment(command) {
 }
 
 function looksLikeFunctionAssignment(command) {
-  return /^\s*[a-z][A-Za-z0-9_]*\s*\(\s*x\s*\)\s*=\s*[-+*/^().\sx\d0-9]+\s*$/.test(command);
+  const match = command.match(/^\s*[a-z][A-Za-z0-9_]*\s*\(\s*x\s*\)\s*=\s*(.+?)\s*$/);
+  return Boolean(match && isSafeCoordinateExpression(match[1]));
+}
+
+function looksLikeLabeledEquation(command) {
+  const match = command.match(/^\s*([A-Za-z][A-Za-z0-9_]*)\s*:\s*([xy])\s*=\s*(.+?)\s*$/i);
+  return Boolean(match && LABEL_PATTERN.test(match[1]) && isSafeCoordinateExpression(match[3]));
 }
 
 export function validateGgbCommand(command) {
-  const normalized = normalizeOuterCommandBrackets(stripInlineComment(String(command ?? "")));
+  const normalized = normalizeSliderCommand(normalizeOuterCommandBrackets(stripInlineComment(String(command ?? ""))));
 
   if (!normalized) {
     return { ok: false, command: normalized, reason: "空命令" };
@@ -197,7 +216,12 @@ export function validateGgbCommand(command) {
     return { ok: false, command: normalized, reason: "命令包含不支持的标点符号" };
   }
 
-  if (looksLikePointAssignment(normalized) || looksLikeNumericAssignment(normalized) || looksLikeFunctionAssignment(normalized)) {
+  if (
+    looksLikePointAssignment(normalized)
+    || looksLikeNumericAssignment(normalized)
+    || looksLikeFunctionAssignment(normalized)
+    || looksLikeLabeledEquation(normalized)
+  ) {
     return { ok: true, command: normalized };
   }
 

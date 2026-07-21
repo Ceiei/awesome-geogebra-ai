@@ -1,5 +1,7 @@
 import { normalizeViewport, validateGgbCommands } from "./ggbValidation.js";
+import { mergeDynamicControls } from "../shared/dynamicControls.js";
 import { enhanceSolidGeometryCommands } from "../shared/solidGeometryEnhancer.js";
+import { enhanceTeachingDiagramCommands } from "../shared/teachingDiagramEnhancer.js";
 
 export const solveJsonSchema = {
   name: "geogebra_construction_plan",
@@ -12,6 +14,7 @@ export const solveJsonSchema = {
       "mathType",
       "constructionSteps",
       "ggbCommands",
+      "dynamicControls",
       "viewport",
       "warnings",
       "followupQuestion"
@@ -26,6 +29,21 @@ export const solveJsonSchema = {
       ggbCommands: {
         type: "array",
         items: { type: "string" }
+      },
+      dynamicControls: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["name", "description", "min", "max", "step"],
+          properties: {
+            name: { type: "string" },
+            description: { type: "string" },
+            min: { type: "number" },
+            max: { type: "number" },
+            step: { type: "number" }
+          }
+        }
       },
       viewport: {
         type: "object",
@@ -60,7 +78,10 @@ export function normalizeSolveResult(raw) {
   const mathType = ["geometry", "function", "analytic_geometry", "solid_geometry"].includes(result.mathType)
     ? result.mathType
     : "geometry";
-  const enhancedCommands = enhanceSolidGeometryCommands({ mathType, commands: result.ggbCommands });
+  const enhancedCommands = enhanceTeachingDiagramCommands({
+    mathType,
+    commands: enhanceSolidGeometryCommands({ mathType, commands: result.ggbCommands })
+  });
   const { validCommands, rejectedCommands } = validateGgbCommands(enhancedCommands);
 
   return {
@@ -71,6 +92,10 @@ export function normalizeSolveResult(raw) {
       : [],
     ggbCommands: validCommands,
     rejectedCommands,
+    dynamicControls: mergeDynamicControls({
+      commands: validCommands,
+      dynamicControls: result.dynamicControls
+    }),
     viewport: normalizeViewport(result.viewport),
     warnings: Array.isArray(result.warnings)
       ? result.warnings.map((warning) => String(warning).trim()).filter(Boolean)
