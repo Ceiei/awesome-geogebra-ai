@@ -43,6 +43,7 @@ import { getRenderLogState } from "./renderLogState.js";
 import { createHistoryCacheKey, findHistoryCacheHit, readHistoryItems } from "./historyCache.js";
 import { mergeDynamicControls } from "../shared/dynamicControls.js";
 import { enhanceSolidGeometryCommands } from "../shared/solidGeometryEnhancer.js";
+import { normalizeStyleCommandTargets } from "../shared/styleTargetNormalizer.js";
 import {
   AREA_FILLING,
   enhanceTeachingDiagramCommands,
@@ -294,7 +295,6 @@ function GeoGebraCanvas({ result, renderRequest }) {
   const demoRunRef = useRef(0);
   const [status, setStatus] = useState("正在加载 GeoGebra...");
   const [commandResults, setCommandResults] = useState([]);
-  const [isRenderLogExpanded, setIsRenderLogExpanded] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [viewMode, setViewMode] = useState("2d");
   const [appletReadyVersion, setAppletReadyVersion] = useState(0);
@@ -327,8 +327,6 @@ function GeoGebraCanvas({ result, renderRequest }) {
     ? dynamicValues[demoFocusControl.name] ?? getInitialDynamicControlValue(demoFocusControl)
     : undefined;
   const renderLogState = getRenderLogState(commandResults);
-  const shouldShowRenderLogDetails = isRenderLogExpanded || renderLogState.defaultExpanded;
-  const renderLogEntries = renderLogState.defaultExpanded ? renderLogState.visibleEntries : commandResults.slice(-8);
 
   useEffect(() => {
     demoRunRef.current += 1;
@@ -502,13 +500,11 @@ function GeoGebraCanvas({ result, renderRequest }) {
       }
       const hasRenderedObject = Boolean(objectNames.length || nextCommandResults.some((item) => item.ok));
       setCommandResults(nextCommandResults);
-      setIsRenderLogExpanded(false);
       setLastRenderedSignature(hasRenderedObject ? currentRenderSignature : "");
       setStatus(hasRenderedObject ? "已绘制" : "未生成可见对象");
     } catch (error) {
       setStatus(error.message || "GeoGebra 绘制失败");
       setCommandResults(nextCommandResults);
-      setIsRenderLogExpanded(false);
       setLastRenderedSignature("");
     } finally {
       try {
@@ -554,7 +550,6 @@ function GeoGebraCanvas({ result, renderRequest }) {
     appletRef.current.newConstruction();
     appletRef.current.setCoordSystem(-8, 8, -6, 6);
     setCommandResults([]);
-    setIsRenderLogExpanded(false);
     setLastRenderedSignature("");
     setStatus("已就绪");
   }
@@ -1066,20 +1061,6 @@ function GeoGebraCanvas({ result, renderRequest }) {
       ) : null}
       <div className={`render-log render-log-${renderLogState.tone}`}>
         <span className="render-log-summary">{renderLogState.summary}</span>
-        {commandResults.length ? (
-          <button type="button" onClick={() => setIsRenderLogExpanded((value) => !value)}>
-            {shouldShowRenderLogDetails ? "收起日志" : "查看日志"}
-          </button>
-        ) : null}
-        {shouldShowRenderLogDetails ? (
-          <div className="render-log-details">
-            {renderLogEntries.map((entry) => (
-              <span className={entry.ok ? "log-ok" : "log-fail"} key={entry.command}>
-                {entry.ok ? "成功" : "失败"}: {entry.command}
-              </span>
-            ))}
-          </div>
-        ) : null}
       </div>
     </section>
   );
@@ -1532,17 +1513,6 @@ function PreviewPanel({
             </button>
           </div>
 
-          {result.rejectedCommands?.length ? (
-            <div className="rejected-block">
-              <h3>已拦截的命令</h3>
-              {result.rejectedCommands.map((entry, index) => (
-                <p key={`${entry.command}-${index}`}>
-                  {entry.command || "命令"}：{entry.reason}
-                </p>
-              ))}
-            </div>
-          ) : null}
-
           <button className="primary-button render-button" type="button" onClick={onRender} disabled={!commandCount}>
             <Play size={18} />
             绘制到 GeoGebra
@@ -1723,13 +1693,14 @@ function App() {
   }
 
   function updateCommands(commands) {
+    const normalizedCommands = normalizeStyleCommandTargets(commands);
     setResult((current) => current
       ? {
         ...current,
-        ggbCommands: commands,
+        ggbCommands: normalizedCommands,
         rejectedCommands: [],
         dynamicControls: mergeDynamicControls({
-          commands,
+          commands: normalizedCommands,
           dynamicControls: current.dynamicControls
         })
       }

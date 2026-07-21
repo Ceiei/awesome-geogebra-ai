@@ -17,14 +17,26 @@ export function getRenderLogState(commandResults) {
   }
 
   if (failed.length) {
+    if (succeeded > 0) {
+      return {
+        total,
+        succeeded,
+        failed: failed.length,
+        tone: "ok",
+        summary: "已完成绘制",
+        defaultExpanded: false,
+        visibleEntries: []
+      };
+    }
+
     return {
       total,
       succeeded,
       failed: failed.length,
       tone: "fail",
-      summary: `已执行 ${total} 条命令，失败 ${failed.length} 条`,
-      defaultExpanded: true,
-      visibleEntries: failed
+      summary: "未生成可见图形，请重新生成绘图方案",
+      defaultExpanded: false,
+      visibleEntries: []
     };
   }
 
@@ -33,7 +45,7 @@ export function getRenderLogState(commandResults) {
     succeeded,
     failed: 0,
     tone: "ok",
-    summary: `已执行 ${total} 条命令，全部成功`,
+    summary: "已完成绘制",
     defaultExpanded: false,
     visibleEntries: []
   };

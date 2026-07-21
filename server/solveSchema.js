@@ -2,6 +2,7 @@ import { normalizeViewport, validateGgbCommands } from "./ggbValidation.js";
 import { mergeDynamicControls } from "../shared/dynamicControls.js";
 import { enhanceSolidGeometryCommands } from "../shared/solidGeometryEnhancer.js";
 import { enhanceTeachingDiagramCommands } from "../shared/teachingDiagramEnhancer.js";
+import { normalizeStyleCommandTargets } from "../shared/styleTargetNormalizer.js";
 
 export const solveJsonSchema = {
   name: "geogebra_construction_plan",
@@ -78,10 +79,10 @@ export function normalizeSolveResult(raw) {
   const mathType = ["geometry", "function", "analytic_geometry", "solid_geometry"].includes(result.mathType)
     ? result.mathType
     : "geometry";
-  const enhancedCommands = enhanceTeachingDiagramCommands({
+  const enhancedCommands = normalizeStyleCommandTargets(enhanceTeachingDiagramCommands({
     mathType,
     commands: enhanceSolidGeometryCommands({ mathType, commands: result.ggbCommands })
-  });
+  }));
   const { validCommands, rejectedCommands } = validateGgbCommands(enhancedCommands);
 
   return {
