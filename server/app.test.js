@@ -117,6 +117,35 @@ describe("solve API", () => {
     ]));
   });
 
+  it("keeps triangle area, perpendicular helper, and point labels for line-family area problems", async () => {
+    process.env.USE_MOCK_AI = "1";
+    const response = await request(createApp())
+      .post("/api/solve")
+      .field("text", "已知抛物线 C: y=x^2/2，直线 l: y=kx+1 与抛物线 C 交于 A、B 两点。设点 P 为线段 AB 的中点，过点 P 作 x 轴的垂线，垂足为 H。求点 P 的轨迹，并观察三角形 ABH 的面积如何变化。");
+
+    expect(response.status).toBe(200);
+    expect(response.body.mathType).toBe("analytic_geometry");
+    expect(response.body.dynamicControls).toEqual([
+      { name: "k", description: "直线斜率", min: -1, max: 3, step: 0.1 }
+    ]);
+    expect(response.body.rejectedCommands).toEqual([]);
+    expect(response.body.ggbCommands).toEqual(expect.arrayContaining([
+      "k=Slider(-1,3,0.1,1,180,false,true,false,false)",
+      "A=Intersect(f,l,1)",
+      "B=Intersect(f,l,2)",
+      "P=Midpoint(A,B)",
+      "vertical=OrthogonalLine(P,xAxisLine)",
+      "H=Intersect(vertical,xAxisLine)",
+      "TriangleABH=Polygon(A,B,H)",
+      "height=Segment(P,H)",
+      "AreaABH=Area(TriangleABH)",
+      "SetFilling(TriangleABH,0.35)",
+      "SetColor(height,37,99,235)",
+      "ShowLabel(P,true)",
+      "ShowLabel(H,true)"
+    ]));
+  });
+
   it("rejects unsupported image MIME types", async () => {
     process.env.USE_MOCK_AI = "1";
     const response = await request(createApp())

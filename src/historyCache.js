@@ -1,4 +1,4 @@
-export const HISTORY_CACHE_VERSION = 2;
+export const HISTORY_CACHE_VERSION = 3;
 
 export function normalizeProblemText(text) {
   return String(text ?? "").trim().replace(/\s+/g, " ");

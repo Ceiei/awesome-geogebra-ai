@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { executeGgbCommand, get3DCoordinateSystem } from "./ggbExecutor.js";
+import { executeGgbCommand, get3DCoordinateSystem, getExplicitlyHiddenObjectLabels } from "./ggbExecutor.js";
 
 describe("GeoGebra command executor", () => {
   it("normalizes command brackets before evaluation", () => {
@@ -63,6 +63,14 @@ describe("GeoGebra command executor", () => {
     const api = { isDefined: vi.fn(() => false), setLabelStyle: vi.fn() };
 
     expect(executeGgbCommand(api, "SetLabelMode(missing,1)")).toEqual({ command: "SetLabelMode(missing,1)", ok: false });
+  });
+
+  it("extracts objects that should remain hidden after rendering", () => {
+    expect([...getExplicitlyHiddenObjectLabels([
+      "SetVisible(vertical,false)",
+      "SetVisible[xAxisLine,false]",
+      "SetVisible(P,true)"
+    ])]).toEqual(["vertical", "xAxisLine"]);
   });
 
   it("sets an explicit z range for the 3D view", () => {

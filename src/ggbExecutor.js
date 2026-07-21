@@ -128,6 +128,16 @@ export function executeGgbCommand(api, rawCommand) {
   }
 }
 
+export function getExplicitlyHiddenObjectLabels(commands) {
+  if (!Array.isArray(commands)) return new Set();
+
+  return new Set(commands.flatMap((rawCommand) => {
+    const command = normalizeOuterCommandBrackets(rawCommand);
+    const match = command.match(/^SetVisible\(\s*([A-Za-z][A-Za-z0-9_]*)\s*,\s*false\s*\)$/i);
+    return match ? [match[1]] : [];
+  }));
+}
+
 export function get3DCoordinateSystem(viewport) {
   const extent = Math.max(
     4,

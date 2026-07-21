@@ -23,7 +23,7 @@ import {
   ZoomIn,
   ZoomOut
 } from "lucide-react";
-import { executeGgbCommand, get3DCoordinateSystem } from "./ggbExecutor.js";
+import { executeGgbCommand, get3DCoordinateSystem, getExplicitlyHiddenObjectLabels } from "./ggbExecutor.js";
 import {
   createDemoVideoBlob,
   createDemoVideoFilename,
@@ -50,8 +50,8 @@ import {
 } from "../shared/teachingDiagramEnhancer.js";
 import "./styles.css";
 
-const HISTORY_KEY = "ggb-ai-history-v3";
-const LEGACY_HISTORY_KEYS = ["ggb-ai-history-v2", "ggb-ai-history-v1"];
+const HISTORY_KEY = "ggb-ai-history-v4";
+const LEGACY_HISTORY_KEYS = ["ggb-ai-history-v3", "ggb-ai-history-v2", "ggb-ai-history-v1"];
 const API_SETTINGS_STORAGE_KEY = "ggb-ai-provider-settings-v1";
 
 const defaultApiSettings = {
@@ -472,6 +472,7 @@ function GeoGebraCanvas({ result, renderRequest }) {
           commands: result.ggbCommands
         })
       });
+      const hiddenObjectLabels = getExplicitlyHiddenObjectLabels(commandsToRender);
       areaHighlightLabels = getHighlightedAreaPolygonLabels({ mathType: result.mathType, commands: commandsToRender });
       for (const command of commandsToRender) {
         nextCommandResults.push(executeGgbCommand(api, command));
@@ -479,6 +480,7 @@ function GeoGebraCanvas({ result, renderRequest }) {
 
       objectNames = typeof api.getAllObjectNames === "function" ? api.getAllObjectNames() : [];
       for (const objectName of objectNames) {
+        if (hiddenObjectLabels.has(objectName)) continue;
         api.setVisible?.(objectName, true);
       }
       applyDynamicVisualFixes(api, { areaLabels: areaHighlightLabels, dynamicControls });

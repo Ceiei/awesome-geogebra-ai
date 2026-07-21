@@ -87,7 +87,11 @@ export function buildMockSolveResult(text = "") {
     };
   }
 
-  if (lower.includes("轨迹") || lower.includes("路径") || lower.includes("locus") || lower.includes("path")) {
+  const isLineFamilyAreaProblem = lower.includes("直线")
+    && lower.includes("抛物线")
+    && (lower.includes("面积") || lower.includes("三角形") || lower.includes("垂线") || lower.includes("垂足"));
+
+  if (!isLineFamilyAreaProblem && (lower.includes("轨迹") || lower.includes("路径") || lower.includes("locus") || lower.includes("path"))) {
     return {
       problemSummary: "用滑动条控制抛物线上的动点，并显示相关点的运动轨迹。",
       mathType: "analytic_geometry",
@@ -118,6 +122,56 @@ export function buildMockSolveResult(text = "") {
         { name: "t", description: "动点 P 的位置", min: -3, max: 3, step: 0.1 }
       ],
       viewport: { xmin: -4, xmax: 4, ymin: -1, ymax: 6 },
+      warnings: ["当前启用了 Mock 模式，没有调用 OpenAI。"],
+      followupQuestion: null
+    };
+  }
+
+  if (isLineFamilyAreaProblem) {
+    return {
+      problemSummary: "用滑动条控制直线斜率，观察直线与抛物线交点形成的三角形面积变化。",
+      mathType: "analytic_geometry",
+      constructionSteps: [
+        "创建参数滑动条 k，表示直线 l: y = kx + 1 的斜率。",
+        "绘制抛物线 C: y = x^2 / 2 和动态直线 l。",
+        "标出直线 l 与抛物线 C 的两个交点 A、B，并取线段 AB 的中点 P。",
+        "过 P 作 x 轴垂线，垂足为 H，用线段 PH 表示辅助垂线。",
+        "构造三角形 ABH，用半透明填充显示题目中的面积区域，并显示面积数值。"
+      ],
+      ggbCommands: [
+        "k=Slider(-1,3,0.1,1,180,false,true,false,false)",
+        "f(x)=x^2/2",
+        "l=Line((0,1),(1,k+1))",
+        "A=Intersect(f,l,1)",
+        "B=Intersect(f,l,2)",
+        "P=Midpoint(A,B)",
+        "xAxisLine=Line((-5,0),(5,0))",
+        "vertical=OrthogonalLine(P,xAxisLine)",
+        "H=Intersect(vertical,xAxisLine)",
+        "TriangleABH=Polygon(A,B,H)",
+        "base=Segment(A,B)",
+        "height=Segment(P,H)",
+        "AreaABH=Area(TriangleABH)",
+        "SetVisible(xAxisLine,false)",
+        "SetVisible(vertical,false)",
+        "SetColor(f,31,120,83)",
+        "SetLineThickness(f,4)",
+        "SetColor(l,37,99,235)",
+        "SetLineThickness(l,4)",
+        "SetColor(P,220,38,38)",
+        "SetPointSize(P,5)",
+        "ShowLabel(A,true)",
+        "ShowLabel(B,true)",
+        "ShowLabel(P,true)",
+        "ShowLabel(H,true)",
+        "Text(\"A、B：直线与抛物线交点\", (-4.7,6.4))",
+        "Text(\"P：AB 中点，H：P 到 x 轴垂足\", (-4.7,5.8))",
+        "Text(\"△ABH 面积 = \" + AreaABH, (-4.7,5.2))"
+      ],
+      dynamicControls: [
+        { name: "k", description: "直线斜率", min: -1, max: 3, step: 0.1 }
+      ],
+      viewport: { xmin: -5, xmax: 5, ymin: -1.5, ymax: 7 },
       warnings: ["当前启用了 Mock 模式，没有调用 OpenAI。"],
       followupQuestion: null
     };
