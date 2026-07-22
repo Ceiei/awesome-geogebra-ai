@@ -179,6 +179,67 @@ describe("solve API", () => {
     ]));
   });
 
+  it("uses the built-in ellipse moving-point area template", async () => {
+    process.env.USE_MOCK_AI = "1";
+    const response = await request(createApp())
+      .post("/api/solve")
+      .field("text", "解析几何：椭圆上的动点 P 与两个焦点构成的三角形面积如何变化？");
+
+    expect(response.status).toBe(200);
+    expect(response.body.mathType).toBe("analytic_geometry");
+    expect(response.body.rejectedCommands).toEqual([]);
+    expect(response.body.dynamicControls).toEqual([
+      { name: "t", description: "动点 P 的横坐标", min: -2.6, max: 2.6, step: 0.1 }
+    ]);
+    expect(response.body.ggbCommands).toEqual(expect.arrayContaining([
+      "E: x^2/9+y^2/4=1",
+      "TriangleF1F2P=Polygon(F1,F2,P)",
+      "AreaF1F2P=Area(TriangleF1F2P)",
+      "SetFilling(TriangleF1F2P,0.35)"
+    ]));
+  });
+
+  it("uses the built-in quadratic interval endpoint template", async () => {
+    process.env.USE_MOCK_AI = "1";
+    const response = await request(createApp())
+      .post("/api/solve")
+      .field("text", "二次函数在区间上的最大值和最小值随左右端点变化如何观察？");
+
+    expect(response.status).toBe(200);
+    expect(response.body.mathType).toBe("function");
+    expect(response.body.rejectedCommands).toEqual([]);
+    expect(response.body.dynamicControls).toEqual([
+      { name: "a", description: "区间左端点", min: -3, max: 0.8, step: 0.1 },
+      { name: "b", description: "区间右端点", min: 1.2, max: 4, step: 0.1 }
+    ]);
+    expect(response.body.ggbCommands).toEqual(expect.arrayContaining([
+      "f(x)=-(x-1)^2+4",
+      "leftHeight=Segment(A,A0)",
+      "rightHeight=Segment(B,B0)",
+      "intervalBase=Segment(A0,B0)"
+    ]));
+  });
+
+  it("uses the built-in cube section template", async () => {
+    process.env.USE_MOCK_AI = "1";
+    const response = await request(createApp())
+      .post("/api/solve")
+      .field("text", "立体几何：正方体被水平平面截割，观察截面形状随高度变化。");
+
+    expect(response.status).toBe(200);
+    expect(response.body.mathType).toBe("solid_geometry");
+    expect(response.body.rejectedCommands).toEqual([]);
+    expect(response.body.dynamicControls).toEqual([
+      { name: "h", description: "截面高度", min: 0.3, max: 3.7, step: 0.1 }
+    ]);
+    expect(response.body.ggbCommands).toEqual(expect.arrayContaining([
+      "h=Slider(0.3,3.7,0.1,1,180,false,true,false,false)",
+      "P=(0,0,h)",
+      "section=Polygon(P,Q,R,U)",
+      "SetFilling(section,0.04)"
+    ]));
+  });
+
   it("rejects unsupported image MIME types", async () => {
     process.env.USE_MOCK_AI = "1";
     const response = await request(createApp())

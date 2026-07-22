@@ -3,6 +3,7 @@ import multer from "multer";
 import { buildMockCommandsFromSteps, buildMockSolveResult } from "./mockAi.js";
 import { generateCommandsWithOpenAI, solveWithOpenAI } from "./openaiClient.js";
 import { normalizeSolveResult } from "./solveSchema.js";
+import { findTeachingTemplate } from "./teachingTemplates.js";
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const allowedImageTypes = new Set(["image/png", "image/jpeg", "image/webp"]);
@@ -42,9 +43,10 @@ export function createApp() {
         return res.status(415).json({ error: "仅支持 PNG、JPEG 和 WebP 图片。" });
       }
 
-      const rawResult = process.env.USE_MOCK_AI === "1"
+      const templateResult = image ? null : findTeachingTemplate(text);
+      const rawResult = templateResult || (process.env.USE_MOCK_AI === "1"
         ? buildMockSolveResult(text)
-        : await solveWithOpenAI({ text, image, apiKey, baseUrl, model });
+        : await solveWithOpenAI({ text, image, apiKey, baseUrl, model }));
 
       const result = normalizeSolveResult(rawResult);
 
@@ -91,9 +93,10 @@ export function createApp() {
         model
       };
 
-      const rawResult = process.env.USE_MOCK_AI === "1"
+      const templateResult = findTeachingTemplate([commandRequest.problemSummary, ...constructionSteps].join(" "));
+      const rawResult = templateResult || (process.env.USE_MOCK_AI === "1"
         ? buildMockCommandsFromSteps(commandRequest)
-        : await generateCommandsWithOpenAI(commandRequest);
+        : await generateCommandsWithOpenAI(commandRequest));
 
       const result = normalizeSolveResult({
         ...rawResult,

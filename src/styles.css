@@ -1062,6 +1062,86 @@ pre {
   box-shadow: inset 0 0 0 1px var(--border);
 }
 
+.object-inspector {
+  display: grid;
+  gap: 9px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  background: #fff;
+}
+
+.object-inspector-header,
+.object-inspector-body,
+.object-style-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.object-inspector-header {
+  justify-content: space-between;
+  color: #344054;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.object-inspector-header small {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.object-inspector-body {
+  flex-wrap: wrap;
+}
+
+.object-inspector select {
+  min-width: 150px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 7px 9px;
+  background: #fff;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.object-style-actions {
+  flex-wrap: wrap;
+}
+
+.object-style-actions button {
+  min-height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 6px 9px;
+  background: var(--panel-strong);
+  color: #344054;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.object-style-actions button:hover {
+  border-color: #a8b8d0;
+  background: #eef4ff;
+}
+
+.object-style-actions .swatch {
+  width: 30px;
+  padding: 0;
+}
+
+.swatch-blue {
+  background: #2563eb !important;
+}
+
+.swatch-red {
+  background: #dc2626 !important;
+}
+
+.swatch-gray {
+  background: #475569 !important;
+}
+
 .render-log {
   display: flex;
   flex-wrap: wrap;
@@ -1073,8 +1153,7 @@ pre {
   font-size: 12px;
 }
 
-.render-log-summary,
-.render-log-details span {
+.render-log-summary {
   border-radius: 999px;
   padding: 5px 8px;
   background: #f2f4f7;
@@ -1107,13 +1186,6 @@ pre {
 
 .render-log button:hover {
   background: #eff6ff;
-}
-
-.render-log-details {
-  display: flex;
-  flex: 1 0 100%;
-  flex-wrap: wrap;
-  gap: 7px;
 }
 
 .render-log .log-ok {
@@ -1389,8 +1461,7 @@ pre {
   font-size: 11px;
 }
 
-.render-log-summary,
-.render-log-details span {
+.render-log-summary {
   border-radius: 4px;
   padding: 4px 6px;
 }

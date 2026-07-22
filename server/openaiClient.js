@@ -1,6 +1,6 @@
 import "dotenv/config";
 import OpenAI from "openai";
-import { allowedCommandsForPrompt } from "./ggbValidation.js";
+import { buildSystemPrompt } from "./promptProfiles.js";
 import { commandJsonSchema, solveJsonSchema } from "./solveSchema.js";
 
 export const providerPresets = [
@@ -84,43 +84,6 @@ const allowedBaseUrlHosts = [
 const defaultModelByHost = new Map(
   providerPresets.flatMap((provider) => provider.allowedHosts.map((host) => [host, provider.defaultModel]))
 );
-
-function buildSystemPrompt() {
-  return [
-    "You transform math problems into GeoGebra constructions for an interactive applet.",
-    "Return only the requested strict JSON shape.",
-    "Use Simplified Chinese for user-facing fields: problemSummary, constructionSteps, warnings, and followupQuestion.",
-    "Target 2D geometry, functions, analytic geometry, and solid geometry in GeoGebra 3D. For solid geometry, use true 3D point coordinates such as A=(0,0,0) and safe commands such as Segment, Polygon, Prism, Pyramid, Cube, Sphere, Cylinder, Cone, Plane, and Tetrahedron.",
-    "Use English GeoGebra command names.",
-    "Use parentheses (...) for GeoGebra command calls, never square brackets. Define every referenced object before it is used; for example, create dist=Distance(D, plane) before Text(\"距离 = \" + dist, (3,3,2)).",
-    "Never style an anonymous construction expression. For example, do not write SetLineThickness(Segment(P,H),2). First assign the object, e.g. h=Segment(P,H), then style it with SetLineThickness(h,2). Apply the same rule to Polygon, Line, Ray, Circle, and Tangent targets.",
-    "The output should be a clean high-school teaching diagram, not just executable commands. Prioritize clarity, low visual clutter, stable labels, and objects that a teacher can drag and inspect during class.",
-    "Always first solve the user's original request as a static teaching diagram. Then decide whether the static construction contains an implicit variable object that a teacher would naturally want to drag: a point constrained to a curve, an arbitrary point, a variable slope, a variable intercept, a secant/tangent position, a parameter family, an area/length changing with a position, or a locus-related setup. If so, add one or two native GeoGebra sliders even when the user did not explicitly ask for animation.",
-    "Choose dynamic sliders by teaching value, not by every symbol in the problem. A key movable parameter is one whose movement directly explains the theorem, area/length change, slope relationship, tangent/secant transition, locus, or extremum being discussed.",
-    "For these implicit dynamic cases, use commands such as t=Slider(min,max,step,1,160,false,true,false,false), then define dependent objects from that parameter: P=(t,f(t)), a line with slope k, a moving secant point, a polygon, an area, or explanatory text. The Slider label must be assigned before the command, e.g. t=Slider(...); never write Slider(t,...). The diagram must still be meaningful at the default slider value. Do not use JavaScript animation.",
-    "Choose slider min and max so the app's default midpoint is a non-degenerate classroom view: the target area should not be zero, the key perpendicular should not overlap an axis when avoidable, and important labels should not collapse onto one point.",
-    "Do not choose a slider range whose midpoint makes the main construction degenerate. For example, when k=0 would make a secant tangent or collapse A and B, use a non-symmetric range such as k=Slider(0.4,2.4,0.1,1,160,false,true,false,false) so the app's default k value is useful.",
-    "Expose only parameters that are useful for classroom demonstration. Do not create sliders for fixed constants such as a base half-length, a radius, or a given coefficient unless the problem explicitly asks how that constant varies.",
-    "For dynamicControls descriptions, use teacher-facing labels such as '动点 P 的位置', '直线斜率', or '切点位置', not abstract labels like 'parameter t'.",
-    "When a dynamic parameter changes a target object, add only the auxiliary objects that make that effect observable: projection lines for coordinates/heights, a highlighted triangle or quadrilateral for area, a secant/tangent line for slope, a trace/locus helper for path, or a short Text value for the changing measurement.",
-    "For line-family demonstrations such as y=k*x+b, expose k and b as sliders with dynamicControls descriptions '直线斜率' and '直线截距'. Define the line as l=Line((0,b),(1,k+b)) or l: y=k*x+b, then mark relevant intersections and add a short slopeLine helper if it helps classroom explanation.",
-    "When a line-family problem also asks about a triangle area, midpoint, perpendicular foot, or changing area, do not stop at the intersections. Explicitly construct the named triangle region from the problem, e.g. TriangleABH=Polygon(A,B,H), compute AreaABH=Area(TriangleABH), draw the required perpendicular helper such as height=Segment(P,H), show labels for A, B, P, H, and add concise Text explaining point roles. Use a single slider for the teaching variable when possible, e.g. k for the line slope.",
-    "For sideways parabola problems such as y^2=4x, use a GeoGebra-safe implicit conic command such as C: y^2=4*x or C: x=y^2/4. If the problem mentions focus, directrix, chord midpoint, perpendicular foot, locus, or triangle FAB area, define t=Slider(0,4,0.1,1,160,false,true,false,false), k=Slider(0.4,2.4,0.1,1,160,false,true,false,false), F=(1,0), directrix=Line((-1,-7),(-1,7)), T=(t,0), l=Line(T,(t+1,k)), A=Intersect(C,l,1), B=Intersect(C,l,2), M=Midpoint(A,B), H=(-1,y(M)), height=Segment(M,H), TriangleFAB=Polygon(F,A,B), AreaFAB=Area(TriangleFAB), and path=Locus(M,k) when a locus is requested. Show labels for A, B, F, M, H, and make TriangleFAB the highlighted filled area.",
-    "For slope, secant, or tangent demonstrations, name helper lines consistently so the app can style them: secant=Line(...), tangent=Line(...), or slopeLine=Segment(...).",
-    "For locus or path demonstrations, name the trajectory helper consistently so the app can style it: locus=Locus(...), path=Locus(...), or trace=Locus(...).",
-    "When the task asks for or implies area, create a named Polygon for the target region, compute Area(polygon), and style the region with translucent filling so the area is visually obvious. If the area is controlled by a moving point P relative to a fixed base or axis, also draw the base and a projection/height helper such as H=(t,0), h=Segment(P,H), then style h as a blue dashed helper.",
-    "For the angle between a line and a plane in 3D, use Angle(Line(D,E), plane) after defining the plane. Do not use a separately constructed normal vector or Angle(Vector(...), Vector(...)) for this purpose.",
-    "For a prism or polyhedron, explicitly draw every edge with named Segment commands before adding auxiliary planes. Use an infinite Plane only for calculations, then hide it. For a visible auxiliary plane, draw the corresponding finite Polygon face with filling at most 0.04 so it cannot obscure the solid.",
-    "In 3D, do not use Text to repeat point names such as Text(\"A\", A, true) or Text(\"B₁\", B1, true); GeoGebra point labels already do this. Use Text only for meaningful explanations such as a distance value.",
-    "For solid geometry, show labels for key free points, hide labels for edges, planes, faces, and auxiliary objects, use dark thin edges for the solid, and use one slightly thicker segment only for the requested key line.",
-    "Do not generate JavaScript, HTML, scripts, buttons, file operations, or destructive commands.",
-    "Prefer clear free points and construction objects that remain draggable in GeoGebra.",
-    `Allowed GeoGebra command names: ${allowedCommandsForPrompt.join(", ")}.`,
-    "For simple free points use labels like A=(0,0).",
-    "For functions use syntax like f(x)=x^2-3*x+2.",
-    "When the prompt is ambiguous, include a concise followupQuestion and still provide the safest approximate visualization if possible."
-  ].join("\n");
-}
 
 function buildJsonInstruction() {
   return [
@@ -238,10 +201,11 @@ function extractJsonObject(text) {
 }
 
 async function solveWithResponsesApi({ client, model, text, image }) {
+  const systemPrompt = buildSystemPrompt({ text });
   const response = await client.responses.create({
     model,
     input: [
-      { role: "system", content: buildSystemPrompt() },
+      { role: "system", content: systemPrompt },
       { role: "user", content: buildUserContent({ text, image }) }
     ],
     text: {
@@ -256,10 +220,15 @@ async function solveWithResponsesApi({ client, model, text, image }) {
 }
 
 async function generateCommandsWithResponsesApi({ client, model, problemSummary, mathType, constructionSteps, viewport }) {
+  const systemPrompt = buildSystemPrompt({
+    text: problemSummary,
+    mathType,
+    constructionSteps
+  });
   const response = await client.responses.create({
     model,
     input: [
-      { role: "system", content: buildSystemPrompt() },
+      { role: "system", content: systemPrompt },
       {
         role: "user",
         content: [
@@ -282,10 +251,11 @@ async function generateCommandsWithResponsesApi({ client, model, problemSummary,
 }
 
 async function solveWithChatCompletions({ client, model, text, image }) {
+  const systemPrompt = buildSystemPrompt({ text });
   const response = await client.chat.completions.create({
     model,
     messages: [
-      { role: "system", content: `${buildSystemPrompt()}\n${buildJsonInstruction()}` },
+      { role: "system", content: `${systemPrompt}\n${buildJsonInstruction()}` },
       { role: "user", content: buildChatContent({ text, image }) }
     ],
     response_format: { type: "json_object" }
@@ -295,10 +265,15 @@ async function solveWithChatCompletions({ client, model, text, image }) {
 }
 
 async function generateCommandsWithChatCompletions({ client, model, problemSummary, mathType, constructionSteps, viewport }) {
+  const systemPrompt = buildSystemPrompt({
+    text: problemSummary,
+    mathType,
+    constructionSteps
+  });
   const response = await client.chat.completions.create({
     model,
     messages: [
-      { role: "system", content: `${buildSystemPrompt()}\n${buildJsonInstruction()}` },
+      { role: "system", content: `${systemPrompt}\n${buildJsonInstruction()}` },
       {
         role: "user",
         content: buildCommandUserText({ problemSummary, mathType, constructionSteps, viewport })

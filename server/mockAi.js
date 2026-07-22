@@ -1,4 +1,14 @@
+import { findTeachingTemplate } from "./teachingTemplates.js";
+
 export function buildMockSolveResult(text = "") {
+  const templateResult = findTeachingTemplate(text);
+  if (templateResult) {
+    return {
+      ...templateResult,
+      warnings: [...(templateResult.warnings || []), "当前启用了 Mock 模式，没有调用 OpenAI。"]
+    };
+  }
+
   const lower = text.toLowerCase();
   const hasDynamicIntent = lower.includes("动点")
     || lower.includes("参数")
@@ -381,6 +391,17 @@ export function buildMockSolveResult(text = "") {
 
 export function buildMockCommandsFromSteps({ problemSummary = "", mathType = "geometry", constructionSteps = [], viewport } = {}) {
   const stepText = [problemSummary, ...constructionSteps].join(" ");
+  const templateResult = findTeachingTemplate(stepText);
+  if (templateResult) {
+    return {
+      ...templateResult,
+      constructionSteps,
+      viewport: viewport || templateResult.viewport,
+      warnings: ["已根据用户修订的构造步骤匹配内置题型模板。"],
+      followupQuestion: null
+    };
+  }
+
   const shouldUseDynamicCommands = mathType !== "solid_geometry"
     && /动点|参数|动态|面积|斜率|切线|割线|切点|轨迹|路径|slope|tangent|secant|locus|path|变化/i.test(stepText);
 

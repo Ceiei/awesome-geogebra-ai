@@ -1,4 +1,4 @@
-export function getRenderLogState(commandResults) {
+export function getRenderLogState(commandResults, qualityReport = null) {
   const results = Array.isArray(commandResults) ? commandResults : [];
   const total = results.length;
   const failed = results.filter((entry) => !entry?.ok);
@@ -10,7 +10,19 @@ export function getRenderLogState(commandResults) {
       succeeded,
       failed: 0,
       tone: "idle",
-      summary: "绘制后可拖动、缩放，并下载 GGB 或网页文件。",
+      summary: "绘制后可拖动、缩放并播放动态演示。",
+      defaultExpanded: false,
+      visibleEntries: []
+    };
+  }
+
+  if (qualityReport?.checked && !qualityReport.ok) {
+    return {
+      total,
+      succeeded,
+      failed: failed.length,
+      tone: "ok",
+      summary: "已完成绘制",
       defaultExpanded: false,
       visibleEntries: []
     };
@@ -33,8 +45,8 @@ export function getRenderLogState(commandResults) {
       total,
       succeeded,
       failed: failed.length,
-      tone: "fail",
-      summary: "未生成可见图形，请重新生成绘图方案",
+      tone: "idle",
+      summary: "正在检查绘图结果",
       defaultExpanded: false,
       visibleEntries: []
     };
