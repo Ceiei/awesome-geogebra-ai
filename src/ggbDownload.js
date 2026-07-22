@@ -30,10 +30,41 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
-export function createGgbWebPage(base64, { title = "GeoGebra AI 构造", appName = "classic" } = {}) {
+function normalizeCommands(commands) {
+  return Array.isArray(commands)
+    ? commands.map((command) => String(command).trim()).filter(Boolean)
+    : [];
+}
+
+function stringifyForScript(value) {
+  return JSON.stringify(value).replaceAll("</", "<\\/");
+}
+
+export function createGgbWebPage(base64, { title = "GeoGebra AI 构造", appName = "classic", commands = [] } = {}) {
   const safeTitle = escapeHtml(title);
-  const safeBase64 = JSON.stringify(base64);
+  const safeBase64 = stringifyForScript(base64);
   const safeAppName = appName === "3d" ? "3d" : "classic";
+  const normalizedCommands = normalizeCommands(commands);
+  const safeCommands = stringifyForScript(normalizedCommands);
+  const shouldReplayCommands = normalizedCommands.length > 0;
+  const constructionSource = shouldReplayCommands ? "" : `ggbBase64: ${safeBase64},`;
+  const replayScript = shouldReplayCommands
+    ? `
+      const commands = ${safeCommands};
+      try {
+        api.setErrorDialogsActive?.(false);
+      } catch {}
+      for (const command of commands) {
+        try {
+          api.evalCommand(command);
+        } catch (error) {
+          console.warn("GeoGebra command failed", command, error);
+        }
+      }
+      try {
+        api.refreshViews?.();
+      } catch {}`
+    : "";
 
   return `<!doctype html>
 <html lang="zh-CN">
@@ -55,7 +86,8 @@ export function createGgbWebPage(base64, { title = "GeoGebra AI 构造", appName
     const parameters = {
       id: "ggbApplet",
       appName: "${safeAppName}",
-      ggbBase64: ${safeBase64},
+      language: "zh-CN",
+      ${constructionSource}
       width: Math.max(1, window.innerWidth),
       height: Math.max(1, window.innerHeight),
       showToolBar: true,
@@ -63,7 +95,9 @@ export function createGgbWebPage(base64, { title = "GeoGebra AI 构造", appName
       showMenuBar: false,
       showZoomButtons: true,
       enableLabelDrags: true,
-      enableShiftDragZoom: true
+      enableShiftDragZoom: true,
+      appletOnLoad: (api) => {${replayScript}
+      }
     };
 
     const applet = new GGBApplet(parameters, true);
@@ -101,7 +135,8 @@ export function downloadGgbConstruction(api, browserRefs) {
 }
 
 export function downloadGgbWebPage(api, options = {}, browserRefs) {
-  const base64 = getGgbBase64(api);
+  const commands = normalizeCommands(options.commands);
+  const base64 = commands.length ? "" : getGgbBase64(api);
   const html = createGgbWebPage(base64, options);
   downloadBlob(new Blob([html], { type: HTML_MIME_TYPE }), createGgbWebFilename(), browserRefs);
 }

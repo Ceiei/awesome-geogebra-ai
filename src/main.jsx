@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   ChevronRight,
   Copy,
+  Download,
   ExternalLink,
   FileImage,
   History,
@@ -22,6 +23,7 @@ import {
   ZoomOut
 } from "lucide-react";
 import { executeGgbCommand, get3DCoordinateSystem, getExplicitlyHiddenObjectLabels } from "./ggbExecutor.js";
+import { downloadGgbConstruction, downloadGgbWebPage } from "./ggbDownload.js";
 import { getDynamicDemoState } from "./dynamicDemoState.js";
 import {
   createDynamicDemoPlan,
@@ -245,6 +247,112 @@ function getRenderSignature(result, viewMode) {
   });
 }
 
+function splitCommandArguments(source) {
+  const args = [];
+  let depth = 0;
+  let quote = "";
+  let start = 0;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+    const previous = source[index - 1];
+
+    if (quote) {
+      if (character === quote && previous !== "\\") quote = "";
+      continue;
+    }
+
+    if (character === "\"" || character === "'") {
+      quote = character;
+      continue;
+    }
+
+    if (character === "(") depth += 1;
+    if (character === ")") depth -= 1;
+
+    if (character === "," && depth === 0) {
+      args.push(source.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+
+  args.push(source.slice(start).trim());
+  return args.filter(Boolean);
+}
+
+function parseObjectCommand(command) {
+  const text = String(command || "").trim();
+  const labeledEquation = text.match(/^([A-Za-z][A-Za-z0-9_]*)\s*:/);
+  if (labeledEquation) {
+    return { label: labeledEquation[1], commandName: "Equation", args: [] };
+  }
+
+  const assignment = text.match(/^([A-Za-z][A-Za-z0-9_]*)\s*=\s*([A-Za-z][A-Za-z0-9_]*)?\s*(?:\(([\s\S]*)\))?\s*$/);
+  if (!assignment) return null;
+
+  const [, label, commandName, argsSource = ""] = assignment;
+  if (!commandName && /^\s*\(/.test(text.replace(/^([A-Za-z][A-Za-z0-9_]*)\s*=\s*/, ""))) {
+    return { label, commandName: "Point", args: [] };
+  }
+  if (!commandName) return null;
+  return { label, commandName, args: splitCommandArguments(argsSource) };
+}
+
+function buildObjectCommandIndex(commands) {
+  const index = new Map();
+  for (const command of commands || []) {
+    const parsed = parseObjectCommand(command);
+    if (parsed?.label) index.set(parsed.label, parsed);
+  }
+  return index;
+}
+
+function getObjectTypeLabel(api, objectName, commandIndex) {
+  const parsed = commandIndex.get(objectName);
+  const commandName = parsed?.commandName || "";
+  const normalizedCommand = commandName.toLowerCase();
+  let type = "";
+
+  try {
+    type = String(api?.getObjectType?.(objectName) || "").toLowerCase();
+  } catch {
+    type = "";
+  }
+
+  if (normalizedCommand === "point" || type.includes("point")) return "点";
+  if (normalizedCommand === "function" || type.includes("function")) return "函数";
+  if (normalizedCommand === "equation" || type.includes("conic")) return "曲线";
+  if (normalizedCommand === "line" || type.includes("line")) return "直线";
+  if (normalizedCommand === "segment" || type.includes("segment")) return "线段";
+  if (normalizedCommand === "ray" || type.includes("ray")) return "射线";
+  if (normalizedCommand === "circle" || type.includes("circle")) return "圆";
+  if (normalizedCommand === "locus" || type.includes("locus")) return "轨迹";
+  if (normalizedCommand === "plane" || type.includes("plane")) return "平面";
+  if (normalizedCommand === "angle" || type.includes("angle")) return "角";
+  if (normalizedCommand === "distance") return "距离";
+  if (normalizedCommand === "area") return "面积";
+  if (normalizedCommand === "slider" || type.includes("numeric")) return "参数";
+  if (normalizedCommand === "polygon" || type.includes("polygon")) {
+    const vertexNames = parsed?.args?.filter((arg) => /^[A-Za-z][A-Za-z0-9_]*$/.test(arg)) || [];
+    if (vertexNames.length === 3) return "三角形";
+    if (vertexNames.length === 4) return "四边形";
+    if (vertexNames.length > 4) return "多边形";
+    return "多边形";
+  }
+
+  return "对象";
+}
+
+function getObjectDisplayName(api, objectName, commandIndex) {
+  const parsed = commandIndex.get(objectName);
+  const typeLabel = getObjectTypeLabel(api, objectName, commandIndex);
+  if (["三角形", "四边形", "多边形"].includes(typeLabel)) {
+    const vertexNames = parsed?.args?.filter((arg) => /^[A-Za-z][A-Za-z0-9_]*$/.test(arg)) || [];
+    return vertexNames.length ? `${typeLabel} ${vertexNames.join("")}` : `${typeLabel} ${objectName}`;
+  }
+  return `${typeLabel} ${objectName}`;
+}
+
 function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
   const containerRef = useRef(null);
   const shellRef = useRef(null);
@@ -255,14 +363,19 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
   const [renderQuality, setRenderQuality] = useState(null);
   const [canvasObjects, setCanvasObjects] = useState([]);
   const [selectedObject, setSelectedObject] = useState("");
+  const [isSelectedLabelVisible, setIsSelectedLabelVisible] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [viewMode, setViewMode] = useState("2d");
   const [appletReadyVersion, setAppletReadyVersion] = useState(0);
+  const [isDownloadMenuOpen, setIsDownloadMenuOpen] = useState(false);
   const [dynamicValues, setDynamicValues] = useState({});
   const [isPlayingDemo, setIsPlayingDemo] = useState(false);
   const [lastRenderedSignature, setLastRenderedSignature] = useState("");
   const [demoFocusControl, setDemoFocusControl] = useState(null);
   const repairAttemptsRef = useRef(new Set());
+  const objectCommandIndexRef = useRef(new Map());
+  const clickListenerNameRef = useRef(`__ggbAiObjectClick_${Math.random().toString(36).slice(2)}`);
+  const highlightedObjectRef = useRef("");
   const currentRenderSignature = getRenderSignature(result, viewMode);
   const demoState = getDynamicDemoState({
     supportsRecording: false,
@@ -285,6 +398,9 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
     setRenderQuality(null);
     setCanvasObjects([]);
     setSelectedObject("");
+    setIsSelectedLabelVisible(true);
+    objectCommandIndexRef.current = new Map();
+    highlightedObjectRef.current = "";
     const nextValues = {};
     for (const control of result?.dynamicControls || []) {
       nextValues[control.name] = getInitialDynamicControlValue(control);
@@ -338,6 +454,14 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
         useBrowserForJS: false,
         appletOnLoad: (api) => {
           appletRef.current = api;
+          window[clickListenerNameRef.current] = (objectName) => {
+            if (objectName) selectCanvasObject(String(objectName), { fromCanvas: true });
+          };
+          try {
+            api.registerClickListener?.(clickListenerNameRef.current);
+          } catch {
+            // Some GeoGebra builds do not expose click listeners in embedded mode.
+          }
           setStatus("已就绪");
           setAppletReadyVersion((version) => version + 1);
           try {
@@ -360,6 +484,11 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
       cancelled = true;
       window.clearInterval(timer);
       appletRef.current = null;
+      try {
+        delete window[clickListenerNameRef.current];
+      } catch {
+        window[clickListenerNameRef.current] = undefined;
+      }
       if (containerRef.current) containerRef.current.replaceChildren();
     };
   }, [viewMode]);
@@ -420,6 +549,7 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
         })
       });
       const hiddenObjectLabels = getExplicitlyHiddenObjectLabels(commandsToRender);
+      objectCommandIndexRef.current = buildObjectCommandIndex(commandsToRender);
       areaHighlightLabels = getHighlightedAreaPolygonLabels({ mathType: result.mathType, commands: commandsToRender });
       for (const command of commandsToRender) {
         nextCommandResults.push(executeGgbCommand(api, command));
@@ -430,7 +560,11 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
         .filter((name) => !dynamicControls.some((control) => control.name === name))
         .slice(0, 48);
       setCanvasObjects(inspectableObjects);
-      setSelectedObject((current) => (current && inspectableObjects.includes(current) ? current : inspectableObjects[0] || ""));
+      setSelectedObject((current) => {
+        const nextSelected = current && inspectableObjects.includes(current) ? current : inspectableObjects[0] || "";
+        if (nextSelected) window.setTimeout(() => selectCanvasObject(nextSelected, { announce: false }), 0);
+        return nextSelected;
+      });
       for (const objectName of objectNames) {
         if (hiddenObjectLabels.has(objectName)) continue;
         api.setVisible?.(objectName, true);
@@ -582,6 +716,44 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
     }
   }
 
+  function selectCanvasObject(objectName, { fromCanvas = false, announce = true } = {}) {
+    const api = appletRef.current;
+    if (!objectName) return;
+
+    setSelectedObject(objectName);
+    try {
+      if (typeof api?.getLabelVisible === "function") {
+        setIsSelectedLabelVisible(Boolean(api.getLabelVisible(objectName)));
+      } else {
+        setIsSelectedLabelVisible(true);
+      }
+    } catch {
+      setIsSelectedLabelVisible(true);
+    }
+
+    try {
+      if (typeof api?.setHighlighting === "function") {
+        if (highlightedObjectRef.current && highlightedObjectRef.current !== objectName) {
+          api.setHighlighting(highlightedObjectRef.current, false);
+        }
+        api.setHighlighting(objectName, true);
+        highlightedObjectRef.current = objectName;
+      }
+      if (typeof api?.setSelected === "function") {
+        api.setSelected(objectName);
+      } else if (/^[A-Za-z][A-Za-z0-9_]*$/.test(objectName)) {
+        api?.evalCommand?.(`SelectObjects(${objectName})`);
+      }
+      api?.refreshViews?.();
+    } catch {
+      // Selection highlighting is best-effort; the style panel should still remain usable.
+    }
+
+    if (announce || fromCanvas) {
+      setStatus(`已选中${getObjectDisplayName(api, objectName, objectCommandIndexRef.current)}`);
+    }
+  }
+
   function resetDynamicControls() {
     const controls = result?.dynamicControls || [];
     if (!controls.length) return;
@@ -606,16 +778,20 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
     if (!api || !selectedObject) return;
 
     try {
-      if (action === "label-on") api.setLabelVisible?.(selectedObject, true);
-      if (action === "label-off") api.setLabelVisible?.(selectedObject, false);
+      if (action === "toggle-label") {
+        const nextVisible = !isSelectedLabelVisible;
+        api.setLabelVisible?.(selectedObject, nextVisible);
+        setIsSelectedLabelVisible(nextVisible);
+      }
       if (action === "blue") api.setColor?.(selectedObject, 37, 99, 235);
       if (action === "red") api.setColor?.(selectedObject, 220, 38, 38);
       if (action === "gray") api.setColor?.(selectedObject, 71, 85, 105);
       if (action === "bold") api.setLineThickness?.(selectedObject, 5);
+      if (action !== "toggle-label") selectCanvasObject(selectedObject, { announce: false });
       api.refreshViews?.();
-      setStatus(`已更新对象 ${selectedObject}`);
+      setStatus(`已更新${getObjectDisplayName(api, selectedObject, objectCommandIndexRef.current)}`);
     } catch {
-      setStatus(`对象 ${selectedObject} 暂不支持该样式`);
+      setStatus(`${getObjectDisplayName(api, selectedObject, objectCommandIndexRef.current)}暂不支持该样式`);
     }
   }
 
@@ -721,6 +897,31 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
     }
   }
 
+  function downloadConstruction(format) {
+    try {
+      if (format === "web") {
+        downloadGgbWebPage(appletRef.current, {
+          appName: viewMode === "3d" ? "3d" : "classic",
+          commands: result?.ggbCommands || []
+        });
+        setStatus("已下载网页版 HTML");
+      } else {
+        downloadGgbConstruction(appletRef.current);
+        setStatus("已下载 .ggb 文件");
+      }
+      setIsDownloadMenuOpen(false);
+    } catch (error) {
+      setStatus(error.message || "下载文件失败");
+    }
+  }
+
+  const objectOptions = canvasObjects.map((objectName) => ({
+    name: objectName,
+    label: getObjectDisplayName(appletRef.current, objectName, objectCommandIndexRef.current)
+  }));
+  const selectedObjectLabel = selectedObject
+    ? getObjectDisplayName(appletRef.current, selectedObject, objectCommandIndexRef.current)
+    : "";
 
   return (
     <section className={`panel canvas-panel${isFullscreen ? " canvas-panel-fullscreen" : ""}`}>
@@ -754,6 +955,28 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
           <button className="icon-button canvas-zoom-control" type="button" onClick={() => changeZoom("out")} title="缩小画布">
             <ZoomOut size={17} />
           </button>
+          <div className="download-menu">
+            <button
+              className="icon-button canvas-download-control"
+              type="button"
+              onClick={() => setIsDownloadMenuOpen((value) => !value)}
+              title="下载 GGB 或网页版"
+              aria-expanded={isDownloadMenuOpen}
+              aria-haspopup="menu"
+            >
+              <Download size={17} />
+            </button>
+            {isDownloadMenuOpen ? (
+              <div className="download-menu-popover" role="menu">
+                <button type="button" role="menuitem" onClick={() => downloadConstruction("ggb")}>
+                  下载 .ggb 文件
+                </button>
+                <button type="button" role="menuitem" onClick={() => downloadConstruction("web")}>
+                  下载网页版 .html
+                </button>
+              </div>
+            ) : null}
+          </div>
           <button
             className="icon-button canvas-fullscreen-control"
             type="button"
@@ -833,16 +1056,18 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
           <div className="object-inspector-body">
             <select
               value={selectedObject}
-              onChange={(event) => setSelectedObject(event.target.value)}
+              onChange={(event) => selectCanvasObject(event.target.value)}
               aria-label="选择 GeoGebra 对象"
             >
-              {canvasObjects.map((objectName) => (
-                <option key={objectName} value={objectName}>{objectName}</option>
+              {objectOptions.map((object) => (
+                <option key={object.name} value={object.name}>{object.label}</option>
               ))}
             </select>
+            {selectedObjectLabel ? <span className="object-current-name">{selectedObjectLabel}</span> : null}
             <div className="object-style-actions">
-              <button type="button" onClick={() => styleSelectedObject("label-on")}>显示标签</button>
-              <button type="button" onClick={() => styleSelectedObject("label-off")}>隐藏标签</button>
+              <button type="button" onClick={() => styleSelectedObject("toggle-label")}>
+                {isSelectedLabelVisible ? "隐藏标签" : "显示标签"}
+              </button>
               <button className="swatch swatch-blue" type="button" onClick={() => styleSelectedObject("blue")} title="设为蓝色" />
               <button className="swatch swatch-red" type="button" onClick={() => styleSelectedObject("red")} title="设为红色" />
               <button className="swatch swatch-gray" type="button" onClick={() => styleSelectedObject("gray")} title="设为灰色" />

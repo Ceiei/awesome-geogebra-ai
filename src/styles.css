@@ -1105,6 +1105,15 @@ pre {
   font-weight: 700;
 }
 
+.object-current-name {
+  border-radius: 999px;
+  padding: 6px 9px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 850;
+}
+
 .object-style-actions {
   flex-wrap: wrap;
 }

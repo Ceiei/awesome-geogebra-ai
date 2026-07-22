@@ -27,8 +27,23 @@ describe("GeoGebra download helpers", () => {
 
     expect(html).toContain("https://www.geogebra.org/apps/deployggb.js");
     expect(html).toContain('appName: "3d"');
+    expect(html).toContain('language: "zh-CN"');
     expect(html).toContain('ggbBase64: "AQID"');
     expect(html).toContain("测试 &lt;构造&gt;");
     expect(html).toContain('applet.inject("ggb-container")');
+  });
+
+  it("can create a command-replay html page to avoid localized ggb file parsing errors", () => {
+    const html = createGgbWebPage("", {
+      commands: [
+        "k=Slider(0.4,2.4,0.1,1,180,false,true,false,false)",
+        "path=Locus(M,k)"
+      ]
+    });
+
+    expect(html).not.toContain("ggbBase64");
+    expect(html).toContain("api.evalCommand(command)");
+    expect(html).toContain("path=Locus(M,k)");
+    expect(html).toContain("api.setErrorDialogsActive?.(false)");
   });
 });
