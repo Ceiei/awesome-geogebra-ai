@@ -2019,9 +2019,7 @@ function PreviewPanel({
   onSelectHistory,
   onOpenCommands,
   onOpenHistory,
-  onUpdateTeachingNotes,
-  activeStepId,
-  onSelectStep
+  onUpdateTeachingNotes
 }) {
   const commandCount = result?.ggbCommands?.length || 0;
   const [editableSteps, setEditableSteps] = useState("");
@@ -2089,18 +2087,6 @@ function PreviewPanel({
               onChange={(event) => setEditableSteps(event.target.value)}
               placeholder="每行一个构造步骤，修改后可让 AI 重新生成命令。"
             />
-            <div className="step-links" aria-label="构造步骤与图形联动">
-              {(result.constructionSteps || []).map((step, index) => (
-                <button
-                  className={activeStepId === step.id ? "is-active" : ""}
-                  key={step.id || index}
-                  type="button"
-                  onClick={() => onSelectStep?.(step)}
-                >
-                  {index + 1}
-                </button>
-              ))}
-            </div>
             <div className="steps-actions">
               <button className="secondary-button" type="button" onClick={regenerateCommands} disabled={isRegenerating}>
                 {isRegenerating ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
@@ -2658,8 +2644,6 @@ function App() {
         onOpenCommands={() => setIsCommandOpen(true)}
         onOpenHistory={() => setIsHistoryOpen(true)}
         onUpdateTeachingNotes={updateTeachingNotes}
-        activeStepId={activeStep?.id || ""}
-        onSelectStep={setActiveStep}
       />
       <GeoGebraCanvas
         result={latestResult}
