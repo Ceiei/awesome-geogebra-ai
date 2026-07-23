@@ -194,11 +194,13 @@ describe("solve API", () => {
     expect(response.status).toBe(200);
     expect(response.body.mathType).toBe("analytic_geometry");
     expect(response.body.rejectedCommands).toEqual([]);
-    expect(response.body.dynamicControls).toEqual([]);
+    expect(response.body.dynamicControls).toEqual([
+      { name: "t", description: "动点 P 的位置", min: -2.7, max: 2.7, step: 0.1 }
+    ]);
     expect(response.body.dynamicCandidates[0]).toMatchObject({
       name: "t",
       label: "动点 P 的位置",
-      enabled: false
+      enabled: true
     });
     expect(response.body.problemContract.fixedExpressions).toContain("x^2/9+y^2/4=1");
     expect(response.body.ggbCommands).toEqual(expect.arrayContaining([
@@ -248,13 +250,15 @@ describe("solve API", () => {
     expect(response.status).toBe(200);
     expect(response.body.mathType).toBe("solid_geometry");
     expect(response.body.rejectedCommands).toEqual([]);
-    expect(response.body.dynamicControls).toEqual([]);
+    expect(response.body.dynamicControls).toEqual([
+      { name: "h", description: "截面高度", min: 0.4, max: 3.6, step: 0.1 }
+    ]);
     expect(response.body.dynamicCandidates[0]).toMatchObject({
       name: "h",
       label: "截面高度",
       min: 0.4,
       max: 3.6,
-      enabled: false
+      enabled: true
     });
     expect(response.body.ggbCommands).toEqual(expect.arrayContaining([
       "h=Slider(0.4,3.6,0.1,1,180,false,true,false,false)",

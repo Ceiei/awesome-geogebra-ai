@@ -1,8 +1,8 @@
 import { parseGgbCommand } from "./ggbCommandParser.js";
 
 export const SOLVE_SCHEMA_VERSION = 2;
-export const PROMPT_VERSION = "2026-07-23-teacher-v3";
-export const TEMPLATE_VERSION = "2026-07-23-parameterized-v3";
+export const PROMPT_VERSION = "2026-07-23-teacher-v4";
+export const TEMPLATE_VERSION = "2026-07-23-parameterized-v4";
 export const VALIDATOR_VERSION = "2026-07-23-semantic-v3";
 
 const MATH_TYPES = new Set(["geometry", "function", "analytic_geometry", "solid_geometry"]);
@@ -186,9 +186,19 @@ export function normalizeSolveResultV2(raw, { sourceText = "", model = "", provi
     : controls.map((control) => ({ ...control, enabled: true }));
   const dynamicCandidates = candidatesSource.map((item) => ({
     ...normalizeDynamicControl(item),
-    enabled: item?.enabled === true,
+    enabled: true,
     reason: String(item?.reason || item?.description || "")
   })).filter((item) => item.name).slice(0, 2);
+  const dynamicControls = [...new Map([
+    ...controls,
+    ...dynamicCandidates.map((candidate) => ({
+      name: candidate.name,
+      description: candidate.label || candidate.description,
+      min: candidate.min,
+      max: candidate.max,
+      step: candidate.step
+    }))
+  ].map((control) => [control.name, control])).values()];
 
   return {
     schemaVersion: SOLVE_SCHEMA_VERSION,
@@ -200,9 +210,7 @@ export function normalizeSolveResultV2(raw, { sourceText = "", model = "", provi
     objectManifest,
     ggbCommands: commands,
     dynamicCandidates,
-    dynamicControls: hasExplicitCandidates
-      ? controls.filter((control) => dynamicCandidates.some((candidate) => candidate.name === control.name && candidate.enabled))
-      : controls,
+    dynamicControls,
     teachingNotes: {
       conclusion: String(result.teachingNotes?.conclusion || ""),
       keyReasons: (Array.isArray(result.teachingNotes?.keyReasons) ? result.teachingNotes.keyReasons : []).slice(0, 5).map((item, index) => ({

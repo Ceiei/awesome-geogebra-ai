@@ -287,26 +287,43 @@ function getObjectTypeLabel(api, objectName, commandIndex) {
     type = "";
   }
 
-  if (normalizedCommand === "point" || type.includes("point")) return "点";
-  if (normalizedCommand === "function" || type.includes("function")) return "函数";
-  if (normalizedCommand === "equation" || type.includes("conic")) return "曲线";
-  if (normalizedCommand === "line" || type.includes("line")) return "直线";
-  if (normalizedCommand === "segment" || type.includes("segment")) return "线段";
-  if (normalizedCommand === "ray" || type.includes("ray")) return "射线";
-  if (normalizedCommand === "circle" || type.includes("circle")) return "圆";
-  if (normalizedCommand === "locus" || type.includes("locus")) return "轨迹";
-  if (normalizedCommand === "plane" || type.includes("plane")) return "平面";
-  if (normalizedCommand === "angle" || type.includes("angle")) return "角";
-  if (normalizedCommand === "distance") return "距离";
-  if (normalizedCommand === "area") return "面积";
-  if (normalizedCommand === "slider" || type.includes("numeric")) return "参数";
-  if (normalizedCommand === "polygon" || type.includes("polygon")) {
+  if (normalizedCommand === "polygon") {
     const vertexNames = parsed?.args?.filter((arg) => /^[A-Za-z][A-Za-z0-9_]*$/.test(arg)) || [];
     if (vertexNames.length === 3) return "三角形";
     if (vertexNames.length === 4) return "四边形";
-    if (vertexNames.length > 4) return "多边形";
     return "多边形";
   }
+  if (normalizedCommand === "point") return "点";
+  if (normalizedCommand === "function") return "函数";
+  if (normalizedCommand === "equation") return "曲线";
+  if (normalizedCommand === "line") return "直线";
+  if (normalizedCommand === "segment") return "线段";
+  if (normalizedCommand === "ray") return "射线";
+  if (normalizedCommand === "circle") return "圆";
+  if (normalizedCommand === "locus") return "轨迹";
+  if (normalizedCommand === "plane") return "平面";
+  if (normalizedCommand === "angle") return "角";
+  if (normalizedCommand === "distance") return "距离";
+  if (normalizedCommand === "area") return "面积";
+  if (normalizedCommand === "slider") return "参数";
+
+  if (type.includes("polygon")) {
+    const vertexNames = parsed?.args?.filter((arg) => /^[A-Za-z][A-Za-z0-9_]*$/.test(arg)) || [];
+    if (vertexNames.length === 3) return "三角形";
+    if (vertexNames.length === 4) return "四边形";
+    return "多边形";
+  }
+  if (type.includes("point")) return "点";
+  if (type.includes("function")) return "函数";
+  if (type.includes("conic")) return "曲线";
+  if (type.includes("segment")) return "线段";
+  if (type.includes("ray")) return "射线";
+  if (type.includes("circle")) return "圆";
+  if (type.includes("locus")) return "轨迹";
+  if (type.includes("plane")) return "平面";
+  if (type.includes("line")) return "直线";
+  if (type.includes("angle")) return "角";
+  if (type.includes("numeric")) return "参数";
 
   return "对象";
 }
@@ -319,6 +336,36 @@ function getObjectDisplayName(api, objectName, commandIndex) {
     return vertexNames.length ? `${typeLabel} ${vertexNames.join("")}` : `${typeLabel} ${objectName}`;
   }
   return `${typeLabel} ${objectName}`;
+}
+
+function getCanonicalObjectDisplayName(api, objectName, commandIndex, objectManifest = []) {
+  const manifestObject = objectManifest.find((object) => object.label === objectName);
+  return manifestObject?.teacherName || getObjectDisplayName(api, objectName, commandIndex);
+}
+
+function getObjectGeometryCategory(api, objectName, commandIndex, manifestObject) {
+  const parsed = commandIndex.get(objectName);
+  const sourceType = String(parsed?.commandName || manifestObject?.objectType || "").toLowerCase();
+  let apiType = "";
+
+  try {
+    apiType = String(api?.getObjectType?.(objectName) || "").toLowerCase();
+  } catch {
+    apiType = "";
+  }
+
+  const type = sourceType || apiType;
+  if (["point", "center", "intersect", "midpoint", "vertex"].includes(type) || type.includes("point")) return "point";
+  if (["polygon", "plane"].includes(type) || type.includes("polygon") || type.includes("plane")) return "surface";
+  if (
+    ["cube", "cone", "cylinder", "prism", "pyramid", "polyhedron", "sphere", "tetrahedron"].includes(type)
+    || ["cube", "cone", "cylinder", "prism", "pyramid", "polyhedron", "sphere", "tetrahedron"].some((name) => type.includes(name))
+  ) return "solid";
+  if (
+    ["function", "equation", "line", "segment", "ray", "circle", "locus", "tangent", "orthogonalline", "perpendicularline", "parallelline", "vector", "anglebisector", "semicircle"].includes(type)
+    || ["function", "conic", "line", "segment", "ray", "circle", "locus", "vector"].some((name) => type.includes(name))
+  ) return "line";
+  return null;
 }
 
 function collectRuntimeObjectStates(api, objectManifest = []) {
@@ -679,8 +726,20 @@ function GeoGebraCanvas({
       }
 
       objectNames = typeof api.getAllObjectNames === "function" ? api.getAllObjectNames() : [];
+      const manifestByLabel = new Map((result.objectManifest || []).map((object) => [object.label, object]));
+      const knownObjectLabels = new Set([
+        ...objectCommandIndexRef.current.keys(),
+        ...manifestByLabel.keys()
+      ]);
       const inspectableObjects = objectNames
         .filter((name) => !dynamicControls.some((control) => control.name === name))
+        .filter((name) => knownObjectLabels.has(name))
+        .filter((name) => getObjectGeometryCategory(
+          api,
+          name,
+          objectCommandIndexRef.current,
+          manifestByLabel.get(name)
+        ))
         .slice(0, 200);
       setCanvasObjects(inspectableObjects);
       setSelectedObject((current) => {
@@ -965,7 +1024,12 @@ function GeoGebraCanvas({
     }
 
     if (announce || fromCanvas) {
-      setStatus(`已选中${getObjectDisplayName(api, objectName, objectCommandIndexRef.current)}`);
+      setStatus(`已选中${getCanonicalObjectDisplayName(
+        api,
+        objectName,
+        objectCommandIndexRef.current,
+        result?.objectManifest
+      )}`);
     }
   }
 
@@ -1009,9 +1073,19 @@ function GeoGebraCanvas({
       if (action === "toggle-label") setIsSelectedLabelVisible(nextVisible);
       if (action !== "toggle-label") selectCanvasObject(selectedObject, { announce: false });
       api.refreshViews?.();
-      setStatus(`已更新${getObjectDisplayName(api, selectedObject, objectCommandIndexRef.current)}`);
+      setStatus(`已更新${getCanonicalObjectDisplayName(
+        api,
+        selectedObject,
+        objectCommandIndexRef.current,
+        result?.objectManifest
+      )}`);
     } catch {
-      setStatus(`${getObjectDisplayName(api, selectedObject, objectCommandIndexRef.current)}暂不支持该样式`);
+      setStatus(`${getCanonicalObjectDisplayName(
+        api,
+        selectedObject,
+        objectCommandIndexRef.current,
+        result?.objectManifest
+      )}暂不支持该样式`);
     }
   }
 
@@ -1143,31 +1217,36 @@ function GeoGebraCanvas({
   const manifestByLabel = new Map((result?.objectManifest || []).map((object) => [object.label, object]));
   const objectOptions = canvasObjects.map((objectName) => ({
     name: objectName,
-    label: manifestByLabel.get(objectName)?.teacherName
-      || getObjectDisplayName(appletRef.current, objectName, objectCommandIndexRef.current)
+    label: getCanonicalObjectDisplayName(
+      appletRef.current,
+      objectName,
+      objectCommandIndexRef.current,
+      result?.objectManifest
+    ),
+    category: getObjectGeometryCategory(
+      appletRef.current,
+      objectName,
+      objectCommandIndexRef.current,
+      manifestByLabel.get(objectName)
+    )
   }));
-  const roleLabels = {
-    original: "原题对象",
-    key: "关键对象",
-    conclusion: "结论对象",
-    helper: "辅助对象",
-    trajectory: "运动轨迹",
-    region: "图形区域",
-    measurement: "度量与结论",
-    parameter: "动态参数",
-    hidden: "隐藏计算对象"
+  const categoryLabels = {
+    point: "点",
+    line: "线",
+    surface: "面",
+    solid: "体"
   };
   const objectGroups = objectOptions
     .filter((object) => object.label.toLowerCase().includes(objectSearch.trim().toLowerCase()))
     .reduce((groups, object) => {
-      const role = manifestByLabel.get(object.name)?.role || "original";
-      const current = groups.get(role) || [];
+      const current = groups.get(object.category) || [];
       current.push(object);
-      groups.set(role, current);
+      groups.set(object.category, current);
       return groups;
     }, new Map());
+  const objectOptionByName = new Map(objectOptions.map((object) => [object.name, object]));
   const selectedObjectLabel = selectedObject
-    ? getObjectDisplayName(appletRef.current, selectedObject, objectCommandIndexRef.current)
+    ? objectOptionByName.get(selectedObject)?.label || ""
     : "";
 
   return (
@@ -1357,11 +1436,11 @@ function GeoGebraCanvas({
           })}
         </div>
       ) : null}
-      {canvasObjects.length ? (
+      {objectOptions.length ? (
         <div className="object-inspector" aria-label="对象属性面板">
           <div className="object-inspector-header">
             <span>对象树</span>
-            <small>{canvasObjects.length} 个对象</small>
+            <small>{objectOptions.length} 个对象</small>
           </div>
           <div className="object-inspector-body">
             <div className="object-tree">
@@ -1374,9 +1453,12 @@ function GeoGebraCanvas({
                   aria-label="搜索对象"
                 />
               </label>
-              {[...objectGroups.entries()].map(([role, objects]) => (
-                <details key={role} open>
-                  <summary>{roleLabels[role] || "其他对象"} <small>{objects.length}</small></summary>
+              {["point", "line", "surface", "solid"].map((category) => {
+                const objects = objectGroups.get(category) || [];
+                if (!objects.length) return null;
+                return (
+                <details key={category} open>
+                  <summary>{categoryLabels[category]} <small>{objects.length}</small></summary>
                   {objects.map((object) => (
                     <label className={`object-tree-row${selectedObjects.includes(object.name) ? " is-selected" : ""}`} key={object.name}>
                       <input
@@ -1396,7 +1478,8 @@ function GeoGebraCanvas({
                     </label>
                   ))}
                 </details>
-              ))}
+                );
+              })}
             </div>
             <div className="object-inspector-controls">
               {selectedObjectLabel ? <span className="object-current-name">{selectedObjectLabel}</span> : null}
@@ -1936,7 +2019,6 @@ function PreviewPanel({
   onSelectHistory,
   onOpenCommands,
   onOpenHistory,
-  onToggleDynamicCandidate,
   onUpdateTeachingNotes,
   activeStepId,
   onSelectStep
@@ -2032,27 +2114,6 @@ function PreviewPanel({
               </div>
             ) : null}
           </div>
-
-          {result.dynamicCandidates?.length ? (
-            <div className="dynamic-candidates">
-              <h3>可选动态演示</h3>
-              {result.dynamicCandidates.map((candidate) => (
-                <div className="dynamic-candidate" key={candidate.name}>
-                  <div>
-                    <strong>{candidate.label || candidate.description || candidate.name}</strong>
-                    <p>{candidate.reason || "启用后可用滑动条观察图形变化。"}</p>
-                  </div>
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    onClick={() => onToggleDynamicCandidate(candidate.name)}
-                  >
-                    {candidate.enabled ? "关闭动态" : "启用动态"}
-                  </button>
-                </div>
-              ))}
-            </div>
-          ) : null}
 
           {result.teachingNotes?.conclusion || result.teachingNotes?.keyReasons?.length ? (
             <div className="teaching-notes">
@@ -2528,34 +2589,6 @@ function App() {
     return payload;
   }
 
-  function toggleDynamicCandidate(name) {
-    setResult((current) => {
-      if (!current) return current;
-      const dynamicCandidates = (current.dynamicCandidates || []).map((candidate) => (
-        candidate.name === name ? { ...candidate, enabled: !candidate.enabled } : candidate
-      ));
-      const enabledNames = new Set(dynamicCandidates.filter((candidate) => candidate.enabled).map((candidate) => candidate.name));
-      const allControls = mergeDynamicControls({
-        commands: current.ggbCommands,
-        dynamicControls: [
-          ...(current.dynamicControls || []),
-          ...dynamicCandidates.map((candidate) => ({
-            name: candidate.name,
-            description: candidate.label || candidate.description,
-            min: candidate.min,
-            max: candidate.max,
-            step: candidate.step
-          }))
-        ]
-      });
-      return {
-        ...current,
-        dynamicCandidates,
-        dynamicControls: allControls.filter((control) => enabledNames.has(control.name))
-      };
-    });
-  }
-
   function updateTeachingNotes(teachingNotes) {
     setResult((current) => current ? { ...current, teachingNotes } : current);
   }
@@ -2624,7 +2657,6 @@ function App() {
         onSelectHistory={selectHistory}
         onOpenCommands={() => setIsCommandOpen(true)}
         onOpenHistory={() => setIsHistoryOpen(true)}
-        onToggleDynamicCandidate={toggleDynamicCandidate}
         onUpdateTeachingNotes={updateTeachingNotes}
         activeStepId={activeStep?.id || ""}
         onSelectStep={setActiveStep}

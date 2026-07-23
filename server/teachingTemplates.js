@@ -80,7 +80,7 @@ function ellipseMovingPointTemplate({ aSquared, bSquared, sourceText }) {
       { name: "t", label: "动点 P 的位置", description: "动点 P 的位置", min: -sliderLimit, max: sliderLimit, step: 0.1, defaultValue: 0, affectedObjects: ["P", "H", "TriangleF1F2P", "AreaF1F2P"] }
     ],
     dynamicCandidates: [
-      { name: "t", label: "动点 P 的位置", description: "控制点 P 沿椭圆移动", min: -sliderLimit, max: sliderLimit, step: 0.1, defaultValue: 0, affectedObjects: ["P", "H", "TriangleF1F2P"], enabled: false }
+      { name: "t", label: "动点 P 的位置", description: "控制点 P 沿椭圆移动", min: -sliderLimit, max: sliderLimit, step: 0.1, defaultValue: 0, affectedObjects: ["P", "H", "TriangleF1F2P"], enabled: true }
     ],
     viewport: { xmin: -viewportExtent, xmax: viewportExtent, ymin: -viewportExtent, ymax: viewportExtent },
     warnings: [],
@@ -197,7 +197,7 @@ function cubeSectionTemplate({ sideLength, sourceText }) {
       { name: "h", label: "截面高度", description: "截面高度", min: minHeight, max: maxHeight, step: 0.1, defaultValue: side / 2, affectedObjects: ["P", "Q", "R", "U", "section"] }
     ],
     dynamicCandidates: [
-      { name: "h", label: "截面高度", description: "控制水平截面高度", min: minHeight, max: maxHeight, step: 0.1, defaultValue: side / 2, affectedObjects: ["section"], enabled: false }
+      { name: "h", label: "截面高度", description: "控制水平截面高度", min: minHeight, max: maxHeight, step: 0.1, defaultValue: side / 2, affectedObjects: ["section"], enabled: true }
     ],
     viewport: { xmin: -1, xmax: side + 1, ymin: -1, ymax: side + 1 },
     warnings: [],
