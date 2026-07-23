@@ -1,5 +1,8 @@
 const MAX_COMMAND_LENGTH = 420;
-const MAX_COMMANDS = 80;
+// A complete teaching diagram can legitimately contain dozens of construction
+// commands followed by deterministic style commands. Keep a finite ceiling for
+// abuse protection without truncating ordinary 2D/3D classroom constructions.
+const MAX_COMMANDS = 240;
 const LABEL_PATTERN = /^[A-Za-z][A-Za-z0-9_]*$/;
 const COORDINATE_EXPRESSION_PATTERN = /^[0-9A-Za-z_+\-*/^().\sπ°]+$/;
 const allowedCoordinateFunctions = new Set([

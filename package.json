@@ -9,7 +9,8 @@
     "start": "node server/index.js",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:golden": "vitest run server/goldenProblems.test.js shared/semanticValidator.test.js"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^5.1.1",

@@ -26,6 +26,18 @@ describe("solid geometry command enhancement", () => {
     ]));
   });
 
+  it("does not add triangular-prism diagonals to a quadrilateral prism", () => {
+    const commands = [
+      "A=(0,0,0)", "B=(2,0,0)", "C=(2,2,0)", "D=(0,2,0)",
+      "A1=(0,0,2)", "B1=(2,0,2)", "C1=(2,2,2)", "D1=(0,2,2)"
+    ];
+    const enhanced = enhanceSolidGeometryCommands({ mathType: "solid_geometry", commands });
+    expect(enhanced).not.toContain("edgeCA=Segment(C,A)");
+    expect(enhanced).not.toContain("edgeC1A1=Segment(C1,A1)");
+    expect(enhanced).toContain("edgeCD=Segment(C,D)");
+    expect(enhanced).toContain("edgeD1A1=Segment(D1,A1)");
+  });
+
   it("does not alter non-solid constructions", () => {
     expect(enhanceSolidGeometryCommands({ mathType: "geometry", commands: ["A=(0,0)"] })).toEqual(["A=(0,0)"]);
   });

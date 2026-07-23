@@ -149,10 +149,15 @@ export function enhanceSolidGeometryCommands({ mathType, commands }) {
     })
   );
 
-  addEdgeTemplate(enhanced, labels, ["A", "B", "C", "A1", "B1", "C1"], triangularPrismEdges);
-  addEdgeTemplate(enhanced, labels, ["A", "B", "C", "D", "A1", "B1", "C1", "D1"], quadrilateralPrismEdges);
-  addEdgeTemplate(enhanced, labels, ["A", "B", "C", "D", "E", "F", "G", "H"], cubeLetterEdges);
-  addEdgeTemplate(enhanced, labels, ["A", "B", "C", "D", "S"], squarePyramidEdges);
+  if (["A", "B", "C", "D", "A1", "B1", "C1", "D1"].every((label) => labels.has(label))) {
+    addEdgeTemplate(enhanced, labels, ["A", "B", "C", "D", "A1", "B1", "C1", "D1"], quadrilateralPrismEdges);
+  } else if (["A", "B", "C", "A1", "B1", "C1"].every((label) => labels.has(label))) {
+    addEdgeTemplate(enhanced, labels, ["A", "B", "C", "A1", "B1", "C1"], triangularPrismEdges);
+  } else if (["A", "B", "C", "D", "E", "F", "G", "H"].every((label) => labels.has(label))) {
+    addEdgeTemplate(enhanced, labels, ["A", "B", "C", "D", "E", "F", "G", "H"], cubeLetterEdges);
+  } else if (["A", "B", "C", "D", "S"].every((label) => labels.has(label))) {
+    addEdgeTemplate(enhanced, labels, ["A", "B", "C", "D", "S"], squarePyramidEdges);
+  }
 
   for (const label of pointLabels) {
     if (!hasCommand(enhanced, new RegExp(`^\\s*ShowLabel\\s*[\\[(]\\s*${label}\\s*,`, "i"))) {

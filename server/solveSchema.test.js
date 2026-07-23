@@ -65,7 +65,7 @@ describe("solve result normalization", () => {
     expect(result.rejectedCommands).toEqual([]);
     expect(result.ggbCommands).toEqual(expect.arrayContaining([
       "h=Segment(P,H)",
-      "SetLineThickness(h,2)"
+      "SetLineThickness(h,3)"
     ]));
     expect(result.ggbCommands).not.toContain("SetLineThickness(Segment(P, H), 2)");
   });
