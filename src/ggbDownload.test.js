@@ -33,17 +33,16 @@ describe("GeoGebra download helpers", () => {
     expect(html).toContain('applet.inject("ggb-container")');
   });
 
-  it("can create a command-replay html page to avoid localized ggb file parsing errors", () => {
-    const html = createGgbWebPage("", {
+  it("embeds the current construction state instead of replaying commands", () => {
+    const html = createGgbWebPage("CURRENT_BASE64", {
       commands: [
         "k=Slider(0.4,2.4,0.1,1,180,false,true,false,false)",
         "path=Locus(M,k)"
       ]
     });
 
-    expect(html).not.toContain("ggbBase64");
-    expect(html).toContain("api.evalCommand(command)");
-    expect(html).toContain("path=Locus(M,k)");
-    expect(html).toContain("api.setErrorDialogsActive?.(false)");
+    expect(html).toContain('ggbBase64: "CURRENT_BASE64"');
+    expect(html).not.toContain("api.evalCommand(command)");
+    expect(html).not.toContain("path=Locus(M,k)");
   });
 });

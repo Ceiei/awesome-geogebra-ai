@@ -1,14 +1,33 @@
-export const HISTORY_CACHE_VERSION = 5;
+export const HISTORY_CACHE_VERSION = 6;
 
 export function normalizeProblemText(text) {
   return String(text ?? "").trim().replace(/\s+/g, " ");
 }
 
-export function createHistoryCacheKey({ text, imageFingerprint = "" }) {
+export function createHistoryCacheKey({
+  text,
+  imageFingerprint = "",
+  promptVersion = "",
+  templateVersion = "",
+  schemaVersion = "",
+  validatorVersion = "",
+  provider = "",
+  model = ""
+}) {
   const normalizedText = normalizeProblemText(text);
   if (!normalizedText && !imageFingerprint) return "";
 
-  return JSON.stringify({ version: HISTORY_CACHE_VERSION, text: normalizedText, imageFingerprint });
+  return JSON.stringify({
+    version: HISTORY_CACHE_VERSION,
+    text: normalizedText,
+    imageFingerprint,
+    promptVersion,
+    templateVersion,
+    schemaVersion,
+    validatorVersion,
+    provider,
+    model
+  });
 }
 
 function isCurrentCacheKey(cacheKey) {

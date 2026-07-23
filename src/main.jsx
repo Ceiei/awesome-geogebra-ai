@@ -2,22 +2,33 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   AlertTriangle,
+  BookOpen,
   Braces,
   CheckCircle2,
   ChevronRight,
+  ChevronLeft,
   Copy,
   Download,
+  Eye,
+  EyeOff,
   ExternalLink,
   FileImage,
   History,
   Loader2,
   KeyRound,
+  Lock,
   Maximize2,
   Minimize2,
   PencilRuler,
   Play,
+  Presentation,
   RefreshCw,
+  Search,
+  Settings2,
+  Star,
+  Trash2,
   Upload,
+  Unlock,
   X,
   ZoomIn,
   ZoomOut
@@ -41,6 +52,25 @@ import {
   enhanceTeachingDiagramCommands,
   getHighlightedAreaPolygonLabels
 } from "../shared/teachingDiagramEnhancer.js";
+import { providerPresets } from "../shared/providerPresets.js";
+import { validateSemanticContract } from "../shared/semanticValidator.js";
+import {
+  PROMPT_VERSION,
+  SOLVE_SCHEMA_VERSION,
+  TEMPLATE_VERSION,
+  VALIDATOR_VERSION,
+  normalizeSolveResultV2
+} from "../shared/solveResultV2.js";
+import { loadGeoGebra } from "./ggbLoader.js";
+import { createDiagnosticReport, recordDiagnostic } from "./diagnostics.js";
+import {
+  createProjectBackup,
+  deleteProject,
+  importProjects,
+  migrateLegacyHistory,
+  parseProjectBackup,
+  saveProject
+} from "./projectStore.js";
 import "./styles.css";
 
 const HISTORY_KEY = "ggb-ai-history-v6";
@@ -50,103 +80,13 @@ const API_SETTINGS_STORAGE_KEY = "ggb-ai-provider-settings-v1";
 const defaultApiSettings = {
   apiKey: "",
   baseUrl: "",
-  model: ""
+  model: "",
+  supportsVision: null
 };
 
-const providerPresets = [
-  {
-    id: "openai",
-    name: "OpenAI 官方",
-    baseUrl: "",
-    model: "",
-    apiKeyUrl: "https://platform.openai.com/api-keys",
-    note: "Base URL 留空；模型名可留空使用后端默认。"
-  },
-  {
-    id: "aliyun",
-    name: "阿里云百炼",
-    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    model: "qwen3-vl-plus",
-    apiKeyUrl: "https://bailian.console.aliyun.com/",
-    note: "默认使用支持图片理解的视觉模型 qwen3-vl-plus。"
-  },
-  {
-    id: "deepseek",
-    name: "DeepSeek",
-    baseUrl: "https://api.deepseek.com",
-    model: "deepseek-chat",
-    apiKeyUrl: "https://platform.deepseek.com/api_keys",
-    note: "适合文字题；图片题需要换成支持视觉的供应商/模型。"
-  },
-  {
-    id: "volcengine",
-    name: "火山方舟",
-    baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
-    model: "doubao-seed-1-6-250615",
-    apiKeyUrl: "https://console.volcengine.com/ark/",
-    note: "模型名通常是方舟控制台里的模型或推理接入点名称。"
-  },
-  {
-    id: "tencent",
-    name: "腾讯混元",
-    baseUrl: "https://api.hunyuan.cloud.tencent.com/v1",
-    model: "hunyuan-turbos-latest",
-    apiKeyUrl: "https://console.cloud.tencent.com/hunyuan",
-    note: "使用腾讯混元 OpenAI 兼容接口。"
-  },
-  {
-    id: "baidu",
-    name: "百度千帆",
-    baseUrl: "https://qianfan.baidubce.com/v2",
-    model: "ernie-4.0-turbo-8k",
-    apiKeyUrl: "https://console.bce.baidu.com/qianfan/ais/console/applicationConsole/application",
-    note: "使用千帆 OpenAI 兼容接口。"
-  },
-  {
-    id: "zhipu",
-    name: "智谱 GLM",
-    baseUrl: "https://open.bigmodel.cn/api/paas/v4",
-    model: "glm-4-plus",
-    apiKeyUrl: "https://open.bigmodel.cn/usercenter/apikeys",
-    note: "如账号没有该模型权限，请换成控制台可用模型。"
-  },
-  {
-    id: "moonshot",
-    name: "月之暗面",
-    baseUrl: "https://api.moonshot.cn/v1",
-    model: "moonshot-v1-8k",
-    apiKeyUrl: "https://platform.moonshot.cn/console/api-keys",
-    note: "适合文字题；视觉能力取决于所选模型。"
-  },
-  {
-    id: "minimax",
-    name: "MiniMax",
-    baseUrl: "https://api.minimax.chat/v1",
-    model: "MiniMax-Text-01",
-    apiKeyUrl: "https://platform.minimaxi.com/user-center/basic-information/interface-key",
-    note: "使用 MiniMax OpenAI 兼容接口。"
-  },
-  {
-    id: "siliconflow",
-    name: "硅基流动",
-    baseUrl: "https://api.siliconflow.cn/v1",
-    model: "Qwen/Qwen2.5-7B-Instruct",
-    apiKeyUrl: "https://cloud.siliconflow.cn/account/ak",
-    note: "模型名需与硅基流动模型列表完全一致。"
-  },
-  {
-    id: "gemini",
-    name: "Google Gemini",
-    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
-    model: "gemini-2.0-flash",
-    apiKeyUrl: "https://aistudio.google.com/apikey",
-    note: "使用 Gemini 的 OpenAI 兼容入口。"
-  }
-];
-
 const examples = [
-  "解析几何：椭圆上的动点 P 与两个焦点构成的三角形面积如何变化？",
-  "立体几何：正方体被水平平面截割，观察截面形状随高度变化。"
+  "已知椭圆 x²/9+y²/4=1，点 P 在椭圆上运动，求并观察三角形 PF₁F₂ 的面积变化。",
+  "棱长为 4 的正方体 ABCD-A₁B₁C₁D₁ 被水平平面截割，观察截面随高度变化。"
 ];
 
 function readHistory() {
@@ -159,6 +99,17 @@ function readHistory() {
 
 function writeHistory(items) {
   localStorage.setItem(HISTORY_KEY, JSON.stringify(items.slice(0, 8)));
+}
+
+function downloadTextFile(content, filename, type = "application/json") {
+  const url = URL.createObjectURL(new Blob([content], { type }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 function readApiSettings() {
@@ -183,6 +134,23 @@ function formatMathType(mathType) {
     solid_geometry: "立体几何"
   };
   return labels[mathType] || "数学绘图";
+}
+
+function getConstructionStepText(step) {
+  return typeof step === "string" ? step : String(step?.text || "");
+}
+
+function normalizeEditableSteps(text, previousSteps = []) {
+  return String(text || "")
+    .split("\n")
+    .map((step) => step.trim())
+    .filter(Boolean)
+    .map((step, index) => ({
+      id: previousSteps[index]?.id || `step-${index + 1}`,
+      text: step,
+      objectLabels: Array.isArray(previousSteps[index]?.objectLabels) ? previousSteps[index].objectLabels : [],
+      stage: index + 1
+    }));
 }
 
 function getFreePointLabels(commands) {
@@ -353,7 +321,68 @@ function getObjectDisplayName(api, objectName, commandIndex) {
   return `${typeLabel} ${objectName}`;
 }
 
-function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
+function collectRuntimeObjectStates(api, objectManifest = []) {
+  const states = {};
+  const byLabel = new Map(objectManifest.map((object) => [object.label, object]));
+  const pointCoordinates = (label) => {
+    try {
+      const x = Number(api.getXcoord?.(label));
+      const y = Number(api.getYcoord?.(label));
+      const z = Number(api.getZcoord?.(label));
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+      return Number.isFinite(z) ? [x, y, z] : [x, y];
+    } catch {
+      return null;
+    }
+  };
+
+  for (const object of objectManifest) {
+    const coordinates = pointCoordinates(object.label);
+    let value;
+    try {
+      value = Number(api.getValue?.(object.label));
+    } catch {
+      value = Number.NaN;
+    }
+    states[object.label] = {
+      ...(coordinates ? { coordinates } : {}),
+      ...(Number.isFinite(value) ? { value } : {})
+    };
+  }
+
+  for (const object of objectManifest) {
+    const dependencies = object.dependencies || [];
+    if (dependencies.length < 2) continue;
+    const first = states[dependencies[0]]?.coordinates || pointCoordinates(dependencies[0]);
+    const second = states[dependencies[1]]?.coordinates || pointCoordinates(dependencies[1]);
+    if (!first || !second) continue;
+    const dimension = Math.max(first.length, second.length);
+    states[object.label] = {
+      ...states[object.label],
+      vector: Array.from({ length: dimension }, (_, index) => (second[index] || 0) - (first[index] || 0))
+    };
+  }
+
+  for (const object of objectManifest) {
+    if (states[object.label]?.vector || !object.dependencies?.length) continue;
+    const dependency = byLabel.get(object.dependencies[0]);
+    if (dependency && states[dependency.label]?.vector) {
+      states[object.label] = { ...states[object.label], vector: states[dependency.label].vector };
+    }
+  }
+  return states;
+}
+
+function GeoGebraCanvas({
+  result,
+  renderRequest,
+  onRepairCommands,
+  onSemanticReview,
+  isTeachingMode,
+  onToggleTeachingMode,
+  onStepSelection,
+  selectedStep
+}) {
   const containerRef = useRef(null);
   const shellRef = useRef(null);
   const appletRef = useRef(null);
@@ -363,9 +392,14 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
   const [renderQuality, setRenderQuality] = useState(null);
   const [canvasObjects, setCanvasObjects] = useState([]);
   const [selectedObject, setSelectedObject] = useState("");
+  const [selectedObjects, setSelectedObjects] = useState([]);
+  const [objectSearch, setObjectSearch] = useState("");
   const [isSelectedLabelVisible, setIsSelectedLabelVisible] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [viewMode, setViewMode] = useState("2d");
+  const [isEditorMode, setIsEditorMode] = useState(false);
+  const [ggbLoadError, setGgbLoadError] = useState("");
+  const [presentationStage, setPresentationStage] = useState(0);
   const [appletReadyVersion, setAppletReadyVersion] = useState(0);
   const [isDownloadMenuOpen, setIsDownloadMenuOpen] = useState(false);
   const [dynamicValues, setDynamicValues] = useState({});
@@ -373,9 +407,13 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
   const [lastRenderedSignature, setLastRenderedSignature] = useState("");
   const [demoFocusControl, setDemoFocusControl] = useState(null);
   const repairAttemptsRef = useRef(new Set());
+  const repairCountRef = useRef(new Map());
+  const pendingConstructionBase64Ref = useRef("");
+  const semanticReviewSignaturesRef = useRef(new Set());
   const objectCommandIndexRef = useRef(new Map());
   const clickListenerNameRef = useRef(`__ggbAiObjectClick_${Math.random().toString(36).slice(2)}`);
   const highlightedObjectRef = useRef("");
+  const userSelectedViewRef = useRef(false);
   const currentRenderSignature = getRenderSignature(result, viewMode);
   const demoState = getDynamicDemoState({
     supportsRecording: false,
@@ -390,6 +428,10 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
     ? dynamicValues[demoFocusControl.name] ?? getInitialDynamicControlValue(demoFocusControl)
     : undefined;
   const renderLogState = getRenderLogState(commandResults, renderQuality);
+  const maxPresentationStage = Math.max(
+    1,
+    ...(result?.constructionSteps || []).map((step, index) => Number(step?.stage) || index + 1)
+  );
 
   useEffect(() => {
     demoRunRef.current += 1;
@@ -398,6 +440,7 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
     setRenderQuality(null);
     setCanvasObjects([]);
     setSelectedObject("");
+    setSelectedObjects([]);
     setIsSelectedLabelVisible(true);
     objectCommandIndexRef.current = new Map();
     highlightedObjectRef.current = "";
@@ -406,7 +449,56 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
       nextValues[control.name] = getInitialDynamicControlValue(control);
     }
     setDynamicValues(nextValues);
+    setPresentationStage(0);
   }, [result, viewMode]);
+
+  useEffect(() => {
+    if (!result || userSelectedViewRef.current) return;
+    setViewMode(result.mathType === "solid_geometry" ? "3d" : "2d");
+  }, [result?.problemContract?.originalText, result?.mathType]);
+
+  useEffect(() => {
+    if (isTeachingMode) {
+      setPresentationStage((current) => Math.max(1, current || 1));
+    } else {
+      setPresentationStage(0);
+    }
+  }, [isTeachingMode]);
+
+  useEffect(() => {
+    const api = appletRef.current;
+    if (!api || !commandResults.length) return;
+    const manifest = result?.objectManifest || [];
+    for (const object of manifest) {
+      try {
+        const stageVisible = !isTeachingMode
+          || presentationStage <= 0
+          || Number(object.stage || 1) <= presentationStage;
+        api.setVisible?.(object.label, stageVisible && object.visible !== false);
+      } catch {
+        // Continue applying the stage to the rest of the construction.
+      }
+    }
+    const selectedStep = (result?.constructionSteps || []).find((step, index) => (
+      (Number(step?.stage) || index + 1) === presentationStage
+    ));
+    onStepSelection?.(selectedStep || null);
+    api.refreshViews?.();
+  }, [presentationStage, isTeachingMode, commandResults.length, result]);
+
+  useEffect(() => {
+    const api = appletRef.current;
+    if (!api || isTeachingMode) return;
+    const selectedLabels = new Set(selectedStep?.objectLabels || []);
+    for (const objectName of canvasObjects) {
+      try {
+        api.setHighlighting?.(objectName, selectedLabels.has(objectName));
+      } catch {
+        // Highlighting support differs between GeoGebra builds.
+      }
+    }
+    api.refreshViews?.();
+  }, [selectedStep, canvasObjects, isTeachingMode]);
 
   function resizeApplet() {
     const container = containerRef.current;
@@ -435,7 +527,7 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
     function injectApplet() {
       if (cancelled || !containerRef.current || appletRef.current) return;
       if (!window.GGBApplet) {
-        setStatus("GeoGebra 脚本仍在加载...");
+        setStatus("正在连接 GeoGebra...");
         return;
       }
 
@@ -445,9 +537,10 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
         appName: viewMode === "3d" ? "3d" : "classic",
         width: Math.max(1, Math.floor(bounds.width)),
         height: Math.max(1, Math.floor(bounds.height)),
-        showToolBar: true,
-        showAlgebraInput: true,
+        showToolBar: isEditorMode,
+        showAlgebraInput: isEditorMode,
         showMenuBar: false,
+        perspective: isEditorMode ? (viewMode === "3d" ? "AT" : "AG") : (viewMode === "3d" ? "T" : "G"),
         showZoomButtons: true,
         enableLabelDrags: true,
         enableShiftDragZoom: true,
@@ -466,8 +559,16 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
           setAppletReadyVersion((version) => version + 1);
           try {
             resizeApplet();
-            api.setAxesVisible(true, true);
-            api.setCoordSystem(-8, 8, -6, 6);
+            if (viewMode === "3d") {
+              api.setAxesVisible?.(3, true, true, true);
+            } else {
+              api.setAxesVisible(true, true);
+              api.setCoordSystem(-8, 8, -6, 6);
+            }
+            if (pendingConstructionBase64Ref.current) {
+              api.setBase64?.(pendingConstructionBase64Ref.current);
+              pendingConstructionBase64Ref.current = "";
+            }
           } catch {
             // GeoGebra can report ready before every view API is available.
           }
@@ -478,11 +579,19 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
       applet.inject("ggb-canvas");
     }
 
-    injectApplet();
-    const timer = window.setInterval(injectApplet, 500);
+    setGgbLoadError("");
+    setStatus("正在加载 GeoGebra...");
+    loadGeoGebra()
+      .then(() => {
+        if (!cancelled) injectApplet();
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setGgbLoadError(error.message || "GeoGebra 加载失败");
+        setStatus("GeoGebra 暂不可用");
+      });
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
       appletRef.current = null;
       try {
         delete window[clickListenerNameRef.current];
@@ -491,7 +600,20 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
       }
       if (containerRef.current) containerRef.current.replaceChildren();
     };
-  }, [viewMode]);
+  }, [viewMode, isEditorMode]);
+
+  function retryGeoGebraLoad() {
+    setGgbLoadError("");
+    setStatus("正在重新连接 GeoGebra...");
+    loadGeoGebra({ forceRetry: true })
+      .then(() => {
+        if (!appletRef.current) window.location.reload();
+      })
+      .catch((error) => {
+        setGgbLoadError(error.message || "GeoGebra 加载失败");
+        setStatus("GeoGebra 暂不可用");
+      });
+  }
 
   useEffect(() => {
     const handleWindowResize = () => resizeApplet();
@@ -521,6 +643,7 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
       if (viewMode !== "3d") api.setPerspective?.("G");
 
       if (viewMode === "3d") {
+        if (!isEditorMode) api.setPerspective?.("T");
         try {
           api.setCoordSystem(...get3DCoordinateSystem(result.viewport));
         } catch {
@@ -558,7 +681,7 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
       objectNames = typeof api.getAllObjectNames === "function" ? api.getAllObjectNames() : [];
       const inspectableObjects = objectNames
         .filter((name) => !dynamicControls.some((control) => control.name === name))
-        .slice(0, 48);
+        .slice(0, 200);
       setCanvasObjects(inspectableObjects);
       setSelectedObject((current) => {
         const nextSelected = current && inspectableObjects.includes(current) ? current : inspectableObjects[0] || "";
@@ -593,19 +716,66 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
         dynamicControls,
         objectNames
       });
+      const objectStates = collectRuntimeObjectStates(api, result.objectManifest);
+      const semanticReport = validateSemanticContract({
+        contract: result.problemContract,
+        originalContract: result.problemContract,
+        mathType: result.mathType,
+        commands: commandsToRender,
+        objectManifest: result.objectManifest,
+        objectStates
+      });
+      const combinedQualityReport = semanticReport.ok
+        ? qualityReport
+        : {
+          ...qualityReport,
+          checked: true,
+          ok: false,
+          tone: "warn",
+          issues: [...(qualityReport.issues || []), ...semanticReport.issues.map((issue) => issue.message)]
+        };
       const hasRenderedObject = Boolean(objectNames.length || nextCommandResults.some((item) => item.ok));
       setCommandResults(nextCommandResults);
-      setRenderQuality(qualityReport);
+      setRenderQuality(combinedQualityReport);
       setLastRenderedSignature(hasRenderedObject ? currentRenderSignature : "");
       setStatus(hasRenderedObject ? "已绘制" : "正在检查绘图结果");
-      if (!qualityReport.ok || !hasRenderedObject) {
+      if (!combinedQualityReport.ok || !hasRenderedObject) {
         void requestCommandRepair({
           qualityReport: hasRenderedObject
-            ? qualityReport
-            : { ...qualityReport, checked: true, ok: false, issues: ["没有检测到可见 GeoGebra 对象"] },
+            ? combinedQualityReport
+            : { ...combinedQualityReport, checked: true, ok: false, issues: ["没有检测到可见 GeoGebra 对象"] },
           commandResults: nextCommandResults,
           objectNames
         });
+      } else if (semanticReport.requiresSemanticReview && typeof onSemanticReview === "function") {
+        const reviewSignature = getRenderSignature(result, viewMode);
+        if (!semanticReviewSignaturesRef.current.has(reviewSignature)) {
+          semanticReviewSignaturesRef.current.add(reviewSignature);
+          setStatus("正在核对复杂图形...");
+          void onSemanticReview({
+            problemContract: result.problemContract,
+            mathType: result.mathType,
+            objectManifest: result.objectManifest,
+            objectStates,
+            commandSummary: commandsToRender.slice(0, 80)
+          }).then((review) => {
+            if (review?.ok) {
+              setStatus("已绘制");
+              return;
+            }
+            void requestCommandRepair({
+              qualityReport: {
+                checked: true,
+                ok: false,
+                issues: (review?.issues || []).map((issue) => issue.message || "图形语义不一致")
+              },
+              commandResults: nextCommandResults,
+              objectNames
+            });
+          }).catch(() => {
+            setStatus("当前图形未通过完整性检查，请重新生成");
+          });
+        }
       }
     } catch (error) {
       setStatus(error.message || "GeoGebra 绘制失败");
@@ -648,19 +818,55 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
     };
   }, [isFullscreen]);
 
+  useEffect(() => {
+    if (!isTeachingMode) return undefined;
+    function handleTeachingKeys(event) {
+      if (["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) return;
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        setPresentationStage((stage) => Math.max(1, stage - 1));
+      } else if (event.key === "ArrowRight" || event.key === " ") {
+        event.preventDefault();
+        setPresentationStage((stage) => Math.min(maxPresentationStage, Math.max(1, stage + 1)));
+      } else if (event.key === "Home") {
+        event.preventDefault();
+        setPresentationStage(1);
+      }
+    }
+    window.addEventListener("keydown", handleTeachingKeys);
+    return () => window.removeEventListener("keydown", handleTeachingKeys);
+  }, [isTeachingMode, maxPresentationStage]);
+
   function resetCanvas() {
     if (!appletRef.current) return;
     demoRunRef.current += 1;
     setIsPlayingDemo(false);
     setDemoFocusControl(null);
     appletRef.current.newConstruction();
-    appletRef.current.setCoordSystem(-8, 8, -6, 6);
+    if (viewMode === "3d") {
+      try {
+        appletRef.current.setCoordSystem(...get3DCoordinateSystem(result?.viewport));
+        appletRef.current.setAxesVisible?.(3, true, true, true);
+      } catch {
+        // Keep the default 3D camera when this applet build lacks the overload.
+      }
+    } else {
+      appletRef.current.setCoordSystem(-8, 8, -6, 6);
+    }
     setCommandResults([]);
     setRenderQuality(null);
     setCanvasObjects([]);
     setSelectedObject("");
     setLastRenderedSignature("");
     setStatus("已就绪");
+  }
+
+  function preserveConstructionBeforeAppletReload() {
+    try {
+      pendingConstructionBase64Ref.current = appletRef.current?.getBase64?.() || "";
+    } catch {
+      pendingConstructionBase64Ref.current = "";
+    }
   }
 
   function changeZoom(direction) {
@@ -693,6 +899,13 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
 
     const signature = getRenderSignature(result, viewMode);
     if (!signature || repairAttemptsRef.current.has(signature)) return false;
+    const contractKey = JSON.stringify(result.problemContract || { mathType: result.mathType, summary: result.problemSummary });
+    const nextAttempt = (repairCountRef.current.get(contractKey) || 0) + 1;
+    if (nextAttempt > 2) {
+      setStatus("当前图形未通过完整性检查，请重新生成");
+      return false;
+    }
+    repairCountRef.current.set(contractKey, nextAttempt);
     repairAttemptsRef.current.add(signature);
 
     const failedCommands = nextCommandResults
@@ -706,12 +919,13 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
         issues: qualityReport.issues || [],
         failedCommands,
         objectNames: Array.isArray(objectNames) ? objectNames.slice(0, 80) : [],
-        viewMode
+        viewMode,
+        attempt: nextAttempt
       });
       setStatus("已自动修复，正在重新绘制");
       return true;
     } catch {
-      setStatus("已绘制");
+      setStatus("当前图形未通过完整性检查，请重新生成");
       return false;
     }
   }
@@ -721,6 +935,7 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
     if (!objectName) return;
 
     setSelectedObject(objectName);
+    setSelectedObjects([objectName]);
     try {
       if (typeof api?.getLabelVisible === "function") {
         setIsSelectedLabelVisible(Boolean(api.getLabelVisible(objectName)));
@@ -778,15 +993,20 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
     if (!api || !selectedObject) return;
 
     try {
-      if (action === "toggle-label") {
-        const nextVisible = !isSelectedLabelVisible;
-        api.setLabelVisible?.(selectedObject, nextVisible);
-        setIsSelectedLabelVisible(nextVisible);
+      const targets = selectedObjects.length ? selectedObjects : [selectedObject];
+      const nextVisible = !isSelectedLabelVisible;
+      for (const target of targets) {
+        if (action === "toggle-label") api.setLabelVisible?.(target, nextVisible);
+        if (action === "blue") api.setColor?.(target, 37, 99, 235);
+        if (action === "red") api.setColor?.(target, 220, 38, 38);
+        if (action === "gray") api.setColor?.(target, 71, 85, 105);
+        if (action === "bold") api.setLineThickness?.(target, 5);
+        if (action === "hide") api.setVisible?.(target, false);
+        if (action === "show") api.setVisible?.(target, true);
+        if (action === "lock") api.setFixed?.(target, true, false);
+        if (action === "unlock") api.setFixed?.(target, false, true);
       }
-      if (action === "blue") api.setColor?.(selectedObject, 37, 99, 235);
-      if (action === "red") api.setColor?.(selectedObject, 220, 38, 38);
-      if (action === "gray") api.setColor?.(selectedObject, 71, 85, 105);
-      if (action === "bold") api.setLineThickness?.(selectedObject, 5);
+      if (action === "toggle-label") setIsSelectedLabelVisible(nextVisible);
       if (action !== "toggle-label") selectCanvasObject(selectedObject, { announce: false });
       api.refreshViews?.();
       setStatus(`已更新${getObjectDisplayName(api, selectedObject, objectCommandIndexRef.current)}`);
@@ -902,11 +1122,16 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
       if (format === "web") {
         downloadGgbWebPage(appletRef.current, {
           appName: viewMode === "3d" ? "3d" : "classic",
+          title: result?.problemSummary || "GeoGebra AI 构造",
+          problemText: result?.recognizedProblemText || result?.problemContract?.originalText || "",
+          constructionSteps: result?.constructionSteps || [],
+          dynamicControls: result?.dynamicControls || [],
+          objectManifest: result?.objectManifest || [],
           commands: result?.ggbCommands || []
         });
         setStatus("已下载网页版 HTML");
       } else {
-        downloadGgbConstruction(appletRef.current);
+        downloadGgbConstruction(appletRef.current, { title: result?.problemSummary || "GeoGebra AI 构造" });
         setStatus("已下载 .ggb 文件");
       }
       setIsDownloadMenuOpen(false);
@@ -915,10 +1140,32 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
     }
   }
 
+  const manifestByLabel = new Map((result?.objectManifest || []).map((object) => [object.label, object]));
   const objectOptions = canvasObjects.map((objectName) => ({
     name: objectName,
-    label: getObjectDisplayName(appletRef.current, objectName, objectCommandIndexRef.current)
+    label: manifestByLabel.get(objectName)?.teacherName
+      || getObjectDisplayName(appletRef.current, objectName, objectCommandIndexRef.current)
   }));
+  const roleLabels = {
+    original: "原题对象",
+    key: "关键对象",
+    conclusion: "结论对象",
+    helper: "辅助对象",
+    trajectory: "运动轨迹",
+    region: "图形区域",
+    measurement: "度量与结论",
+    parameter: "动态参数",
+    hidden: "隐藏计算对象"
+  };
+  const objectGroups = objectOptions
+    .filter((object) => object.label.toLowerCase().includes(objectSearch.trim().toLowerCase()))
+    .reduce((groups, object) => {
+      const role = manifestByLabel.get(object.name)?.role || "original";
+      const current = groups.get(role) || [];
+      current.push(object);
+      groups.set(role, current);
+      return groups;
+    }, new Map());
   const selectedObjectLabel = selectedObject
     ? getObjectDisplayName(appletRef.current, selectedObject, objectCommandIndexRef.current)
     : "";
@@ -935,7 +1182,11 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
             <button
               className={viewMode === "2d" ? "is-selected" : ""}
               type="button"
-              onClick={() => setViewMode("2d")}
+              onClick={() => {
+                preserveConstructionBeforeAppletReload();
+                userSelectedViewRef.current = true;
+                setViewMode("2d");
+              }}
               aria-pressed={viewMode === "2d"}
             >
               2D
@@ -943,12 +1194,37 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
             <button
               className={viewMode === "3d" ? "is-selected" : ""}
               type="button"
-              onClick={() => setViewMode("3d")}
+              onClick={() => {
+                preserveConstructionBeforeAppletReload();
+                userSelectedViewRef.current = true;
+                setViewMode("3d");
+              }}
               aria-pressed={viewMode === "3d"}
             >
               3D
             </button>
           </div>
+          <button
+            className={`icon-button${isEditorMode ? " is-active" : ""}`}
+            type="button"
+            onClick={() => {
+              preserveConstructionBeforeAppletReload();
+              setIsEditorMode((value) => !value);
+            }}
+            title={isEditorMode ? "切换纯画布" : "打开 GeoGebra 编辑器"}
+            aria-label={isEditorMode ? "切换纯画布" : "打开 GeoGebra 编辑器"}
+          >
+            <Settings2 size={17} />
+          </button>
+          <button
+            className={`icon-button${isTeachingMode ? " is-active" : ""}`}
+            type="button"
+            onClick={onToggleTeachingMode}
+            title={isTeachingMode ? "退出授课模式" : "进入授课模式"}
+            aria-label={isTeachingMode ? "退出授课模式" : "进入授课模式"}
+          >
+            {isTeachingMode ? <BookOpen size={17} /> : <Presentation size={17} />}
+          </button>
           <button className="icon-button canvas-zoom-control" type="button" onClick={() => changeZoom("in")} title="放大画布">
             <ZoomIn size={17} />
           </button>
@@ -992,6 +1268,16 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
       </div>
       <div className="ggb-shell" ref={shellRef}>
         <div id="ggb-canvas" ref={containerRef} />
+        {ggbLoadError ? (
+          <div className="ggb-load-error" role="alert">
+            <AlertTriangle size={24} />
+            <strong>{ggbLoadError}</strong>
+            <button className="secondary-button" type="button" onClick={retryGeoGebraLoad}>
+              <RefreshCw size={15} />
+              重新连接
+            </button>
+          </div>
+        ) : null}
         {isPlayingDemo && demoFocusLabel ? (
           <div className="demo-focus-badge">
             演示：{demoFocusLabel}
@@ -1001,6 +1287,30 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
           </div>
         ) : null}
       </div>
+      {isTeachingMode && result ? (
+        <div className="presentation-controls" aria-label="分步演示">
+          <button
+            type="button"
+            onClick={() => setPresentationStage((stage) => Math.max(1, stage - 1))}
+            disabled={presentationStage <= 1}
+            aria-label="上一步"
+          >
+            <ChevronLeft size={16} />
+            上一步
+          </button>
+          <span>第 {Math.max(1, presentationStage)} / {maxPresentationStage} 步</span>
+          <button
+            type="button"
+            onClick={() => setPresentationStage((stage) => Math.min(maxPresentationStage, stage + 1))}
+            disabled={presentationStage >= maxPresentationStage}
+          >
+            下一步
+            <ChevronRight size={16} />
+          </button>
+          <button type="button" onClick={() => setPresentationStage(maxPresentationStage)}>全部显示</button>
+          <button type="button" onClick={() => setPresentationStage(1)}>重新开始</button>
+        </div>
+      ) : null}
       {result?.dynamicControls?.length ? (
         <div className="canvas-dynamic-controls" aria-label="动态演示控制">
           <div className="canvas-dynamic-header">
@@ -1050,28 +1360,59 @@ function GeoGebraCanvas({ result, renderRequest, onRepairCommands }) {
       {canvasObjects.length ? (
         <div className="object-inspector" aria-label="对象属性面板">
           <div className="object-inspector-header">
-            <span>对象属性</span>
+            <span>对象树</span>
             <small>{canvasObjects.length} 个对象</small>
           </div>
           <div className="object-inspector-body">
-            <select
-              value={selectedObject}
-              onChange={(event) => selectCanvasObject(event.target.value)}
-              aria-label="选择 GeoGebra 对象"
-            >
-              {objectOptions.map((object) => (
-                <option key={object.name} value={object.name}>{object.label}</option>
+            <div className="object-tree">
+              <label className="object-search">
+                <Search size={14} />
+                <input
+                  value={objectSearch}
+                  onChange={(event) => setObjectSearch(event.target.value)}
+                  placeholder="搜索对象"
+                  aria-label="搜索对象"
+                />
+              </label>
+              {[...objectGroups.entries()].map(([role, objects]) => (
+                <details key={role} open>
+                  <summary>{roleLabels[role] || "其他对象"} <small>{objects.length}</small></summary>
+                  {objects.map((object) => (
+                    <label className={`object-tree-row${selectedObjects.includes(object.name) ? " is-selected" : ""}`} key={object.name}>
+                      <input
+                        type="checkbox"
+                        checked={selectedObjects.includes(object.name)}
+                        onChange={(event) => {
+                          if (event.target.checked) setSelectedObject(object.name);
+                          setSelectedObjects((current) => {
+                            const next = event.target.checked
+                              ? [...new Set([...current, object.name])]
+                              : current.filter((name) => name !== object.name);
+                            return next;
+                          });
+                        }}
+                      />
+                      <button type="button" onClick={() => selectCanvasObject(object.name)}>{object.label}</button>
+                    </label>
+                  ))}
+                </details>
               ))}
-            </select>
-            {selectedObjectLabel ? <span className="object-current-name">{selectedObjectLabel}</span> : null}
-            <div className="object-style-actions">
+            </div>
+            <div className="object-inspector-controls">
+              {selectedObjectLabel ? <span className="object-current-name">{selectedObjectLabel}</span> : null}
+              <div className="object-style-actions">
               <button type="button" onClick={() => styleSelectedObject("toggle-label")}>
                 {isSelectedLabelVisible ? "隐藏标签" : "显示标签"}
               </button>
+              <button type="button" onClick={() => styleSelectedObject("show")} title="显示对象"><Eye size={14} /></button>
+              <button type="button" onClick={() => styleSelectedObject("hide")} title="隐藏对象"><EyeOff size={14} /></button>
+              <button type="button" onClick={() => styleSelectedObject("lock")} title="锁定对象"><Lock size={14} /></button>
+              <button type="button" onClick={() => styleSelectedObject("unlock")} title="允许拖动"><Unlock size={14} /></button>
               <button className="swatch swatch-blue" type="button" onClick={() => styleSelectedObject("blue")} title="设为蓝色" />
               <button className="swatch swatch-red" type="button" onClick={() => styleSelectedObject("red")} title="设为红色" />
               <button className="swatch swatch-gray" type="button" onClick={() => styleSelectedObject("gray")} title="设为灰色" />
               <button type="button" onClick={() => styleSelectedObject("bold")}>加粗</button>
+              </div>
             </div>
           </div>
         </div>
@@ -1087,6 +1428,38 @@ function ApiKeySettings() {
   const [settings, setSettings] = useState(() => readApiSettings());
   const [isOpen, setIsOpen] = useState(false);
   const [draftSettings, setDraftSettings] = useState(settings);
+  const [connectionStatus, setConnectionStatus] = useState("");
+  const [isTestingConnection, setIsTestingConnection] = useState(false);
+  const modalRef = useRef(null);
+  const triggerRef = useRef(null);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const modal = modalRef.current;
+    modal?.querySelector("input, button, a")?.focus();
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        setIsOpen(false);
+        window.setTimeout(() => triggerRef.current?.focus(), 0);
+        return;
+      }
+      if (event.key !== "Tab" || !modal) return;
+      const focusable = [...modal.querySelectorAll("button, a[href], input, select, textarea, [tabindex]:not([tabindex='-1'])")]
+        .filter((element) => !element.disabled);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen]);
 
   function persistSettings(nextSettings) {
     if (nextSettings.apiKey || nextSettings.baseUrl || nextSettings.model) {
@@ -1100,7 +1473,8 @@ function ApiKeySettings() {
     const nextSettings = {
       apiKey: draftSettings.apiKey.trim(),
       baseUrl: draftSettings.baseUrl.trim(),
-      model: draftSettings.model.trim()
+      model: draftSettings.model.trim(),
+      supportsVision: draftSettings.supportsVision ?? null
     };
     persistSettings(nextSettings);
     setSettings(nextSettings);
@@ -1115,13 +1489,44 @@ function ApiKeySettings() {
     setDraftSettings((current) => ({
       ...current,
       baseUrl: provider.baseUrl,
-      model: provider.model
+      model: provider.model,
+      supportsVision: provider.supportsVisionByDefault
     }));
+  }
+
+  async function testConnection() {
+    setConnectionStatus("");
+    if (!draftSettings.apiKey.trim()) {
+      setConnectionStatus("请先填写 API Key。");
+      return;
+    }
+    setIsTestingConnection(true);
+    try {
+      const response = await fetch("/api/provider/test", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-OpenAI-API-Key": draftSettings.apiKey.trim(),
+          ...(draftSettings.baseUrl.trim() ? { "X-OpenAI-Base-URL": draftSettings.baseUrl.trim() } : {}),
+          ...(draftSettings.model.trim() ? { "X-OpenAI-Model": draftSettings.model.trim() } : {})
+        },
+        body: JSON.stringify({})
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "连接测试失败。");
+      setDraftSettings((current) => ({ ...current, supportsVision: payload.supportsVision ?? current.supportsVision }));
+      setConnectionStatus(`连接成功：${payload.model || "默认模型"}`);
+    } catch (error) {
+      setConnectionStatus(error.message || "连接测试失败。");
+    } finally {
+      setIsTestingConnection(false);
+    }
   }
 
   return (
     <div className="api-key-entry">
       <button
+        ref={triggerRef}
         className={`api-key-status-button${settings.apiKey ? " is-configured" : " is-missing"}`}
         type="button"
         onClick={() => {
@@ -1136,6 +1541,7 @@ function ApiKeySettings() {
       {isOpen ? (
         <div className="modal-backdrop" role="presentation" onMouseDown={() => setIsOpen(false)}>
           <section
+            ref={modalRef}
             className="api-settings-modal"
             role="dialog"
             aria-modal="true"
@@ -1206,10 +1612,15 @@ function ApiKeySettings() {
                 spellCheck="false"
               />
             </details>
-            <p className="modal-note">图片题需要选择支持视觉输入的模型。非 OpenAI 官方 Key 必须配套其平台的地址和模型，避免返回 401。</p>
+            <p className="modal-note">API Key 保存在当前浏览器；发起解析时会经过本站后端转发，但服务端不会持久化。图片题需要选择支持视觉输入的模型。</p>
+            {connectionStatus ? <p className="connection-status" role="status">{connectionStatus}</p> : null}
             <div className="api-key-actions">
               <button className="secondary-button" type="button" onClick={() => setDraftSettings(defaultApiSettings)}>
                 清空
+              </button>
+              <button className="secondary-button" type="button" onClick={testConnection} disabled={isTestingConnection}>
+                {isTestingConnection ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+                {isTestingConnection ? "正在测试" : "测试连接"}
               </button>
               <button className="primary-button compact" type="button" onClick={saveSettings}>
                 保存
@@ -1233,8 +1644,12 @@ function InputPanel({ onSolved, onReuseHistory, history, activeText, setActiveTe
   const [image, setImage] = useState(null);
   const [imagePreview, setImagePreview] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isRecognizing, setIsRecognizing] = useState(false);
+  const [ocrConfirmed, setOcrConfirmed] = useState(true);
+  const [ocrUncertainties, setOcrUncertainties] = useState([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const forceReparseRef = useRef(false);
 
   useEffect(() => {
     return () => {
@@ -1256,6 +1671,8 @@ function InputPanel({ onSolved, onReuseHistory, history, activeText, setActiveTe
     }
     setImage(file);
     setImagePreview(URL.createObjectURL(file));
+    setOcrConfirmed(false);
+    setOcrUncertainties([]);
   }
 
   function handleTextPaste(event) {
@@ -1271,24 +1688,43 @@ function InputPanel({ onSolved, onReuseHistory, history, activeText, setActiveTe
   function clearImage() {
     setImage(null);
     setImagePreview("");
+    setOcrConfirmed(true);
+    setOcrUncertainties([]);
+  }
+
+  async function recognizeImage() {
+    if (!image) return;
+    setError("");
+    setNotice("");
+    setIsRecognizing(true);
+    try {
+      const form = new FormData();
+      form.append("image", image);
+      form.append("text", activeText);
+      const apiSettings = readApiSettings();
+      const headers = {};
+      if (apiSettings.apiKey) headers["X-OpenAI-API-Key"] = apiSettings.apiKey;
+      if (apiSettings.baseUrl) headers["X-OpenAI-Base-URL"] = apiSettings.baseUrl;
+      if (apiSettings.model) headers["X-OpenAI-Model"] = apiSettings.model;
+      const response = await fetch("/api/recognize", { method: "POST", body: form, headers });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "题目图片识别失败。");
+      if (payload.recognizedText) setActiveText(payload.recognizedText);
+      setOcrUncertainties(Array.isArray(payload.uncertainties) ? payload.uncertainties : []);
+      setNotice("请校对识别文字，确认后再生成绘图方案。");
+      recordDiagnostic({ traceId: payload.traceId, stage: "recognize", status: "success" });
+    } catch (recognizeError) {
+      setError(recognizeError.message || "题目图片识别失败。");
+    } finally {
+      setIsRecognizing(false);
+    }
   }
 
   function getVisionModelError() {
     if (!image) return "";
-
-    const model = readApiSettings().model.trim().toLowerCase();
-    const textOnlyModels = new Set([
-      "qwen-plus",
-      "deepseek-chat",
-      "deepseek-reasoner",
-      "moonshot-v1-8k",
-      "minimax-text-01",
-      "qwen/qwen2.5-7b-instruct",
-      "glm-4-plus"
-    ]);
-
-    return textOnlyModels.has(model)
-      ? `当前模型“${model}”不支持图片理解。请在 API 设置中换用视觉模型后重试。`
+    const settings = readApiSettings();
+    return settings.supportsVision === false
+      ? "当前连接测试结果显示该模型不支持图片理解。请在 API 设置中换用视觉模型并重新测试连接。"
       : "";
   }
 
@@ -1301,6 +1737,10 @@ function InputPanel({ onSolved, onReuseHistory, history, activeText, setActiveTe
       setError("请输入题目文字或上传题目图片。");
       return;
     }
+    if (image && !ocrConfirmed) {
+      setError("请先识别并确认题目文字，再生成绘图方案。");
+      return;
+    }
 
     const visionModelError = getVisionModelError();
     if (visionModelError) {
@@ -1311,8 +1751,21 @@ function InputPanel({ onSolved, onReuseHistory, history, activeText, setActiveTe
     setIsSubmitting(true);
     try {
       const imageFingerprint = await createImageFingerprint(image);
-      const cacheKey = createHistoryCacheKey({ text: activeText, imageFingerprint });
-      const cachedItem = findHistoryCacheHit(history, cacheKey, { text: activeText, hasImage: Boolean(image) });
+      const apiSettings = readApiSettings();
+      const selectedProvider = providerPresets.find((provider) => provider.baseUrl === apiSettings.baseUrl)?.id || "custom";
+      const cacheKey = createHistoryCacheKey({
+        text: activeText,
+        imageFingerprint,
+        promptVersion: PROMPT_VERSION,
+        templateVersion: TEMPLATE_VERSION,
+        schemaVersion: SOLVE_SCHEMA_VERSION,
+        validatorVersion: VALIDATOR_VERSION,
+        provider: selectedProvider,
+        model: apiSettings.model
+      });
+      const cachedItem = forceReparseRef.current
+        ? null
+        : findHistoryCacheHit(history, cacheKey, { text: activeText, hasImage: Boolean(image) });
       if (cachedItem) {
         onReuseHistory(cachedItem);
         setNotice("已读取本地历史解析结果，未重复调用模型。");
@@ -1322,7 +1775,6 @@ function InputPanel({ onSolved, onReuseHistory, history, activeText, setActiveTe
       const form = new FormData();
       form.append("text", activeText);
       if (image) form.append("image", image);
-      const apiSettings = readApiSettings();
       const headers = {};
       if (apiSettings.apiKey) headers["X-OpenAI-API-Key"] = apiSettings.apiKey;
       if (apiSettings.baseUrl) headers["X-OpenAI-Base-URL"] = apiSettings.baseUrl;
@@ -1339,9 +1791,17 @@ function InputPanel({ onSolved, onReuseHistory, history, activeText, setActiveTe
         imageFingerprint,
         cacheKey
       });
+      recordDiagnostic({
+        traceId: payload.traceId,
+        stage: "solve",
+        status: "success",
+        mathType: payload.mathType,
+        semanticStatus: payload.semanticReport?.status || "unchecked"
+      });
     } catch (requestError) {
       setError(requestError.message);
     } finally {
+      forceReparseRef.current = false;
       setIsSubmitting(false);
     }
   }
@@ -1403,6 +1863,46 @@ function InputPanel({ onSolved, onReuseHistory, history, activeText, setActiveTe
             </button>
           </div>
         ) : null}
+        {image && !ocrConfirmed ? (
+          <div className="ocr-review">
+            <div>
+              <strong>题图文字校对</strong>
+              <p>{isRecognizing ? "正在识别题目..." : "识别后请检查公式、上下标和点名。"}</p>
+            </div>
+            <div className="ocr-actions">
+              <button className="secondary-button" type="button" onClick={recognizeImage} disabled={isRecognizing}>
+                {isRecognizing ? <Loader2 className="spin" size={15} /> : <FileImage size={15} />}
+                {isRecognizing ? "正在识别" : "识别题目"}
+              </button>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => {
+                  if (!activeText.trim()) {
+                    setError("识别文字不能为空。");
+                    return;
+                  }
+                  setOcrConfirmed(true);
+                  setNotice("题目文字已确认，可以生成绘图方案。");
+                }}
+                disabled={!activeText.trim() || isRecognizing}
+              >
+                <CheckCircle2 size={15} />
+                确认识别文字
+              </button>
+            </div>
+            {ocrUncertainties.length ? (
+              <ul className="ocr-uncertainties">
+                {ocrUncertainties.map((item, index) => (
+                  <li key={`${item.text}-${index}`}>
+                    <strong>{item.text || "疑似内容"}</strong>
+                    <span>{item.reason}{item.suggestion ? `；建议：${item.suggestion}` : ""}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        ) : null}
 
         {error ? (
           <div className="error-box">
@@ -1413,10 +1913,16 @@ function InputPanel({ onSolved, onReuseHistory, history, activeText, setActiveTe
 
         {notice ? <div className="success-box"><CheckCircle2 size={16} /><span>{notice}</span></div> : null}
 
-        <button className="primary-button" type="submit" disabled={isSubmitting}>
-          {isSubmitting ? <Loader2 className="spin" size={18} /> : <ChevronRight size={18} />}
-          {isSubmitting ? "正在理解题目" : "解析并生成方案"}
-        </button>
+        <div className="solve-actions">
+          <button className="primary-button" type="submit" disabled={isSubmitting} onClick={() => { forceReparseRef.current = false; }}>
+            {isSubmitting ? <Loader2 className="spin" size={18} /> : <ChevronRight size={18} />}
+            {isSubmitting ? "正在理解题目" : "使用历史结果或解析"}
+          </button>
+          <button className="secondary-button" type="submit" disabled={isSubmitting} onClick={() => { forceReparseRef.current = true; }}>
+            <RefreshCw size={16} />
+            重新解析
+          </button>
+        </div>
       </form>
     </section>
   );
@@ -1429,24 +1935,30 @@ function PreviewPanel({
   onRegenerateCommands,
   onSelectHistory,
   onOpenCommands,
-  onOpenHistory
+  onOpenHistory,
+  onToggleDynamicCandidate,
+  onUpdateTeachingNotes,
+  activeStepId,
+  onSelectStep
 }) {
   const commandCount = result?.ggbCommands?.length || 0;
   const [editableSteps, setEditableSteps] = useState("");
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [regenerateError, setRegenerateError] = useState("");
+  const [notesHidden, setNotesHidden] = useState(false);
+  const [editableConclusion, setEditableConclusion] = useState("");
+  const [editableReasons, setEditableReasons] = useState("");
 
   useEffect(() => {
-    setEditableSteps(result?.constructionSteps?.join("\n") || "");
+    setEditableSteps(result?.constructionSteps?.map(getConstructionStepText).join("\n") || "");
+    setEditableConclusion(result?.teachingNotes?.conclusion || "");
+    setEditableReasons((result?.teachingNotes?.keyReasons || []).map((reason) => reason.text).join("\n"));
     setRegenerateError("");
   }, [result]);
 
   async function regenerateCommands() {
     if (!result) return;
-    const constructionSteps = editableSteps
-      .split("\n")
-      .map((step) => step.trim())
-      .filter(Boolean);
+    const constructionSteps = normalizeEditableSteps(editableSteps, result?.constructionSteps || []);
 
     if (!constructionSteps.length) {
       setRegenerateError("请至少保留一条构造步骤。");
@@ -1495,6 +2007,18 @@ function PreviewPanel({
               onChange={(event) => setEditableSteps(event.target.value)}
               placeholder="每行一个构造步骤，修改后可让 AI 重新生成命令。"
             />
+            <div className="step-links" aria-label="构造步骤与图形联动">
+              {(result.constructionSteps || []).map((step, index) => (
+                <button
+                  className={activeStepId === step.id ? "is-active" : ""}
+                  key={step.id || index}
+                  type="button"
+                  onClick={() => onSelectStep?.(step)}
+                >
+                  {index + 1}
+                </button>
+              ))}
+            </div>
             <div className="steps-actions">
               <button className="secondary-button" type="button" onClick={regenerateCommands} disabled={isRegenerating}>
                 {isRegenerating ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
@@ -1509,14 +2033,66 @@ function PreviewPanel({
             ) : null}
           </div>
 
-          {result.warnings.length ? (
-            <div className="warning-box">
-              <AlertTriangle size={16} />
-              <div>
-                {result.warnings.map((warning) => (
-                  <p key={warning}>{warning}</p>
-                ))}
+          {result.dynamicCandidates?.length ? (
+            <div className="dynamic-candidates">
+              <h3>可选动态演示</h3>
+              {result.dynamicCandidates.map((candidate) => (
+                <div className="dynamic-candidate" key={candidate.name}>
+                  <div>
+                    <strong>{candidate.label || candidate.description || candidate.name}</strong>
+                    <p>{candidate.reason || "启用后可用滑动条观察图形变化。"}</p>
+                  </div>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => onToggleDynamicCandidate(candidate.name)}
+                  >
+                    {candidate.enabled ? "关闭动态" : "启用动态"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {result.teachingNotes?.conclusion || result.teachingNotes?.keyReasons?.length ? (
+            <div className="teaching-notes">
+              <div className="block-heading">
+                <h3>结论与关键依据（可编辑）</h3>
+                <button className="quiet-text-button" type="button" onClick={() => setNotesHidden((value) => !value)}>
+                  {notesHidden ? "显示" : "隐藏"}
+                </button>
               </div>
+              {!notesHidden ? (
+                <>
+                  <textarea
+                    value={editableConclusion}
+                    onChange={(event) => setEditableConclusion(event.target.value)}
+                    aria-label="题目结论"
+                    placeholder="题目结论"
+                  />
+                  <textarea
+                    value={editableReasons}
+                    onChange={(event) => setEditableReasons(event.target.value)}
+                    aria-label="关键依据"
+                    placeholder="每行一条关键依据"
+                  />
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => onUpdateTeachingNotes({
+                      ...result.teachingNotes,
+                      conclusion: editableConclusion.trim(),
+                      keyReasons: editableReasons.split("\n").map((text, index) => ({
+                        id: result.teachingNotes.keyReasons?.[index]?.id || `reason-${index + 1}`,
+                        text: text.trim(),
+                        objectLabels: result.teachingNotes.keyReasons?.[index]?.objectLabels || []
+                      })).filter((reason) => reason.text)
+                    })}
+                  >
+                    保存讲解内容
+                  </button>
+                </>
+              ) : null}
             </div>
           ) : null}
 
@@ -1565,9 +2141,42 @@ function PreviewPanel({
 }
 
 function DialogFrame({ title, children, onClose }) {
+  const dialogRef = useRef(null);
+  const previousFocusRef = useRef(null);
+
+  useEffect(() => {
+    previousFocusRef.current = document.activeElement;
+    const dialog = dialogRef.current;
+    dialog?.querySelector("button, input, textarea, select, a[href]")?.focus();
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab" || !dialog) return;
+      const focusable = [...dialog.querySelectorAll("button, a[href], input, select, textarea, [tabindex]:not([tabindex='-1'])")]
+        .filter((element) => !element.disabled);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      previousFocusRef.current?.focus?.();
+    };
+  }, [onClose]);
+
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <section className="workspace-dialog" role="dialog" aria-modal="true" aria-label={title} onMouseDown={(event) => event.stopPropagation()}>
+      <section ref={dialogRef} className="workspace-dialog" role="dialog" aria-modal="true" aria-label={title} onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <h2>{title}</h2>
           <button className="icon-button" type="button" onClick={onClose} title="关闭">
@@ -1658,23 +2267,74 @@ function CommandDialog({ result, onUpdateCommands, onClose }) {
   );
 }
 
-function HistoryDialog({ history, onSelect, onClose }) {
+function HistoryDialog({
+  history,
+  onSelect,
+  onDelete,
+  onToggleFavorite,
+  onRename,
+  onDuplicate,
+  onClose,
+  onExportProjects,
+  onImportProjects,
+  onExportDiagnostics
+}) {
+  const [query, setQuery] = useState("");
+  const importInputRef = useRef(null);
+  const visibleHistory = history.filter((item) => (
+    `${item.title || ""} ${item.promptText || ""} ${item.chapter || ""} ${(item.tags || []).join(" ")}`
+      .toLowerCase()
+      .includes(query.trim().toLowerCase())
+  ));
   return (
     <DialogFrame title="全部记录" onClose={onClose}>
+      <div className="history-toolbar">
+        <label className="object-search">
+          <Search size={14} />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索题目、章节或标签" />
+        </label>
+        <button className="secondary-button" type="button" onClick={onExportProjects}>导出项目备份</button>
+        <button className="secondary-button" type="button" onClick={() => importInputRef.current?.click()}>导入项目备份</button>
+        <input
+          ref={importInputRef}
+          type="file"
+          accept="application/json,.json"
+          hidden
+          onChange={async (event) => {
+            const file = event.target.files?.[0];
+            if (file) await onImportProjects(file);
+            event.target.value = "";
+          }}
+        />
+        <button className="secondary-button" type="button" onClick={onExportDiagnostics}>导出诊断报告</button>
+      </div>
       <div className="dialog-history-list">
-        {history.length ? history.map((item) => (
-          <button
-            className="history-item"
-            key={item.id}
-            type="button"
-            onClick={() => {
-              onSelect(item);
-              onClose();
-            }}
-          >
-            <CheckCircle2 size={15} />
-            <span>{item.title || item.projectTitle || item.result.problemSummary || item.promptText || "历史解析"}</span>
-          </button>
+        {visibleHistory.length ? visibleHistory.map((item) => (
+          <div className="history-row" key={item.id}>
+            <button
+              className="history-item"
+              type="button"
+              onClick={() => {
+                onSelect(item);
+                onClose();
+              }}
+            >
+              <CheckCircle2 size={15} />
+              <span>{item.title || item.projectTitle || item.result?.problemSummary || item.promptText || "历史解析"}</span>
+            </button>
+            <button className={item.favorite ? "is-favorite" : ""} type="button" onClick={() => onToggleFavorite(item)} title="收藏">
+              <Star size={15} />
+            </button>
+            <button type="button" onClick={() => onRename(item)} title="重命名">
+              <PencilRuler size={15} />
+            </button>
+            <button type="button" onClick={() => onDuplicate(item)} title="复制为新项目">
+              <Copy size={15} />
+            </button>
+            <button type="button" onClick={() => onDelete(item)} title="删除">
+              <Trash2 size={15} />
+            </button>
+          </div>
         )) : <p className="muted">暂无历史记录。</p>}
       </div>
     </DialogFrame>
@@ -1688,8 +2348,43 @@ function App() {
   const [renderRequest, setRenderRequest] = useState(0);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isCommandOpen, setIsCommandOpen] = useState(false);
+  const [isTeachingMode, setIsTeachingMode] = useState(false);
+  const [activeStep, setActiveStep] = useState(null);
+  const [currentProjectId, setCurrentProjectId] = useState("");
+  const savedVersionSignatureRef = useRef("");
 
   const latestResult = useMemo(() => result, [result]);
+
+  useEffect(() => {
+    migrateLegacyHistory(readHistory())
+      .then((projects) => {
+        if (projects.length) setHistory(projects);
+      })
+      .catch(() => {
+        // localStorage history remains available when IndexedDB is blocked.
+      });
+  }, []);
+
+  useEffect(() => {
+    if (!currentProjectId || !latestResult) return;
+    const signature = JSON.stringify({
+      id: currentProjectId,
+      commands: latestResult.ggbCommands,
+      steps: latestResult.constructionSteps,
+      controls: latestResult.dynamicControls
+    });
+    if (savedVersionSignatureRef.current === signature) return;
+    savedVersionSignatureRef.current = signature;
+    const project = history.find((item) => item.id === currentProjectId);
+    if (!project) return;
+    const version = { id: crypto.randomUUID(), createdAt: new Date().toISOString(), result: latestResult };
+    const updated = {
+      ...project,
+      result: latestResult,
+      versions: [...(project.versions || []), version].slice(-20)
+    };
+    void saveProject(updated).catch(() => {});
+  }, [currentProjectId, latestResult, history]);
 
   function createHistoryTitle(nextResult, metadata = {}) {
     const source = nextResult?.problemSummary || metadata.promptText || "历史解析";
@@ -1697,22 +2392,32 @@ function App() {
   }
 
   function handleSolved(nextResult, metadata) {
-    setResult(nextResult);
+    const normalizedResult = normalizeSolveResultV2(nextResult, {
+      sourceText: metadata?.promptText || nextResult?.recognizedProblemText || ""
+    });
+    setResult({ ...nextResult, ...normalizedResult, rejectedCommands: nextResult.rejectedCommands || [], semanticReport: nextResult.semanticReport });
     const historyItem = {
       id: crypto.randomUUID(),
       timestamp: new Date().toISOString(),
-      title: createHistoryTitle(nextResult, metadata),
+      title: createHistoryTitle(normalizedResult, metadata),
       ...metadata,
-      result: nextResult
+      result: { ...nextResult, ...normalizedResult, rejectedCommands: nextResult.rejectedCommands || [] }
     };
-    const nextHistory = [historyItem, ...history].slice(0, 8);
+    const nextHistory = [historyItem, ...history];
     setHistory(nextHistory);
     writeHistory(nextHistory);
+    setCurrentProjectId(historyItem.id);
+    void saveProject(historyItem).catch(() => {});
   }
 
   function selectHistory(item) {
     setActiveText(item.promptText || "");
-    setResult(item.result);
+    const normalized = normalizeSolveResultV2(item.result, {
+      sourceText: item.promptText || item.result?.recognizedProblemText || "",
+      fromCache: true
+    });
+    setResult({ ...item.result, ...normalized, rejectedCommands: item.result?.rejectedCommands || [] });
+    setCurrentProjectId(item.id);
   }
 
   function updateCommands(commands) {
@@ -1725,7 +2430,11 @@ function App() {
         dynamicControls: mergeDynamicControls({
           commands: normalizedCommands,
           dynamicControls: current.dynamicControls
-        })
+        }),
+        objectManifest: normalizeSolveResultV2({
+          ...current,
+          ggbCommands: normalizedCommands
+        }, { sourceText: current.recognizedProblemText }).objectManifest
       }
       : current);
   }
@@ -1745,6 +2454,7 @@ function App() {
       body: JSON.stringify({
         problemSummary: latestResult.problemSummary,
         mathType: latestResult.mathType,
+        problemContract: latestResult.problemContract,
         viewport: latestResult.viewport,
         constructionSteps
       })
@@ -1754,7 +2464,14 @@ function App() {
       throw new Error(payload.error || "重新生成命令失败。");
     }
 
-    setResult(payload);
+    setResult((current) => current ? {
+      ...current,
+      ...payload,
+      problemSummary: current.problemSummary,
+      mathType: current.mathType,
+      problemContract: current.problemContract,
+      recognizedProblemText: current.recognizedProblemText
+    } : payload);
   }
 
   async function repairCommands(repairContext) {
@@ -1766,22 +2483,18 @@ function App() {
     if (apiSettings.baseUrl) headers["X-OpenAI-Base-URL"] = apiSettings.baseUrl;
     if (apiSettings.model) headers["X-OpenAI-Model"] = apiSettings.model;
 
-    const response = await fetch("/api/commands", {
+    const response = await fetch("/api/repair", {
       method: "POST",
       headers,
       body: JSON.stringify({
-        problemSummary: latestResult.problemSummary,
-        mathType: latestResult.mathType,
-        viewport: latestResult.viewport,
-        constructionSteps: [
-          ...latestResult.constructionSteps,
-          "系统检测到绘图执行或可见性存在问题，请重新生成一组更稳定的 GeoGebra 命令。",
-          "必须避免匿名对象样式命令；所有样式命令必须作用于已命名对象。",
-          "如果涉及面积、垂线、交点、轨迹或立体辅助面，必须显式构造并命名对应对象。",
-          `检测问题：${(repairContext?.issues || []).join("；") || "绘图结果不完整"}`,
-          `失败命令：${(repairContext?.failedCommands || []).join("；") || "无"}`,
-          `当前对象：${(repairContext?.objectNames || []).join("、") || "无"}`
-        ]
+        currentResult: latestResult,
+        attempt: repairContext?.attempt || 1,
+        runtimeReport: {
+          issues: repairContext?.issues || [],
+          failedCommands: repairContext?.failedCommands || [],
+          objectNames: repairContext?.objectNames || [],
+          viewMode: repairContext?.viewMode || ""
+        }
       })
     });
     const payload = await response.json();
@@ -1789,11 +2502,113 @@ function App() {
       throw new Error(payload.error || "自动修复命令失败。");
     }
 
-    setResult(payload);
+    setResult((current) => current ? {
+      ...current,
+      ...payload,
+      problemSummary: current.problemSummary,
+      mathType: current.mathType,
+      problemContract: current.problemContract,
+      recognizedProblemText: current.recognizedProblemText
+    } : payload);
+  }
+
+  async function semanticReview(reviewPayload) {
+    const apiSettings = readApiSettings();
+    const headers = { "Content-Type": "application/json" };
+    if (apiSettings.apiKey) headers["X-OpenAI-API-Key"] = apiSettings.apiKey;
+    if (apiSettings.baseUrl) headers["X-OpenAI-Base-URL"] = apiSettings.baseUrl;
+    if (apiSettings.model) headers["X-OpenAI-Model"] = apiSettings.model;
+    const response = await fetch("/api/semantic-review", {
+      method: "POST",
+      headers,
+      body: JSON.stringify(reviewPayload)
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "复杂图形复核失败。");
+    return payload;
+  }
+
+  function toggleDynamicCandidate(name) {
+    setResult((current) => {
+      if (!current) return current;
+      const dynamicCandidates = (current.dynamicCandidates || []).map((candidate) => (
+        candidate.name === name ? { ...candidate, enabled: !candidate.enabled } : candidate
+      ));
+      const enabledNames = new Set(dynamicCandidates.filter((candidate) => candidate.enabled).map((candidate) => candidate.name));
+      const allControls = mergeDynamicControls({
+        commands: current.ggbCommands,
+        dynamicControls: [
+          ...(current.dynamicControls || []),
+          ...dynamicCandidates.map((candidate) => ({
+            name: candidate.name,
+            description: candidate.label || candidate.description,
+            min: candidate.min,
+            max: candidate.max,
+            step: candidate.step
+          }))
+        ]
+      });
+      return {
+        ...current,
+        dynamicCandidates,
+        dynamicControls: allControls.filter((control) => enabledNames.has(control.name))
+      };
+    });
+  }
+
+  function updateTeachingNotes(teachingNotes) {
+    setResult((current) => current ? { ...current, teachingNotes } : current);
+  }
+
+  async function removeHistoryItem(item) {
+    const nextHistory = history.filter((project) => project.id !== item.id);
+    setHistory(nextHistory);
+    writeHistory(nextHistory);
+    await deleteProject(item.id).catch(() => {});
+    if (currentProjectId === item.id) setCurrentProjectId("");
+  }
+
+  async function toggleFavorite(item) {
+    const updated = { ...item, favorite: !item.favorite };
+    const nextHistory = history.map((project) => project.id === item.id ? updated : project);
+    setHistory(nextHistory);
+    await saveProject(updated).catch(() => {});
+  }
+
+  async function renameProject(item) {
+    const title = window.prompt("输入新的项目名称", item.title || item.result?.problemSummary || "");
+    if (!title?.trim()) return;
+    const updated = { ...item, title: title.trim() };
+    const nextHistory = history.map((project) => project.id === item.id ? updated : project);
+    setHistory(nextHistory);
+    writeHistory(nextHistory);
+    await saveProject(updated).catch(() => {});
+  }
+
+  async function duplicateProject(item) {
+    const duplicated = {
+      ...item,
+      id: crypto.randomUUID(),
+      title: `${item.title || item.result?.problemSummary || "未命名题目"}（副本）`,
+      createdAt: new Date().toISOString(),
+      timestamp: new Date().toISOString(),
+      versions: [...(item.versions || [])]
+    };
+    const saved = await saveProject(duplicated).catch(() => duplicated);
+    const nextHistory = [saved, ...history];
+    setHistory(nextHistory);
+    writeHistory(nextHistory);
+  }
+
+  async function restoreProjectBackup(file) {
+    const projects = parseProjectBackup(await file.text());
+    const restored = await importProjects(projects);
+    setHistory(restored);
+    writeHistory(restored.slice(0, 8));
   }
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell${isTeachingMode ? " teaching-mode" : ""}`}>
       <InputPanel
         activeText={activeText}
         setActiveText={setActiveText}
@@ -1809,8 +2624,21 @@ function App() {
         onSelectHistory={selectHistory}
         onOpenCommands={() => setIsCommandOpen(true)}
         onOpenHistory={() => setIsHistoryOpen(true)}
+        onToggleDynamicCandidate={toggleDynamicCandidate}
+        onUpdateTeachingNotes={updateTeachingNotes}
+        activeStepId={activeStep?.id || ""}
+        onSelectStep={setActiveStep}
       />
-      <GeoGebraCanvas result={latestResult} renderRequest={renderRequest} onRepairCommands={repairCommands} />
+      <GeoGebraCanvas
+        result={latestResult}
+        renderRequest={renderRequest}
+        onRepairCommands={repairCommands}
+        onSemanticReview={semanticReview}
+        isTeachingMode={isTeachingMode}
+        onToggleTeachingMode={() => setIsTeachingMode((value) => !value)}
+        onStepSelection={setActiveStep}
+        selectedStep={activeStep}
+      />
       {isCommandOpen ? (
         <CommandDialog
           result={latestResult}
@@ -1818,9 +2646,25 @@ function App() {
           onClose={() => setIsCommandOpen(false)}
         />
       ) : null}
-      {isHistoryOpen ? <HistoryDialog history={history} onSelect={selectHistory} onClose={() => setIsHistoryOpen(false)} /> : null}
+      {isHistoryOpen ? (
+        <HistoryDialog
+          history={history}
+          onSelect={selectHistory}
+          onDelete={removeHistoryItem}
+          onToggleFavorite={toggleFavorite}
+          onRename={renameProject}
+          onDuplicate={duplicateProject}
+          onExportProjects={() => downloadTextFile(createProjectBackup(history), `geogebra-ai-projects-${new Date().toISOString().slice(0, 10)}.json`)}
+          onImportProjects={restoreProjectBackup}
+          onExportDiagnostics={() => downloadTextFile(createDiagnosticReport(), `geogebra-ai-diagnostics-${new Date().toISOString().slice(0, 10)}.json`)}
+          onClose={() => setIsHistoryOpen(false)}
+        />
+      ) : null}
     </main>
   );
 }
 
-createRoot(document.getElementById("root")).render(<App />);
+const rootElement = document.getElementById("root");
+const reactRoot = globalThis.__GGB_AI_REACT_ROOT__ || createRoot(rootElement);
+globalThis.__GGB_AI_REACT_ROOT__ = reactRoot;
+reactRoot.render(<App />);
