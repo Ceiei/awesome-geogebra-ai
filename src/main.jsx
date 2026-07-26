@@ -81,6 +81,7 @@ const defaultApiSettings = {
   apiKey: "",
   baseUrl: "",
   model: "",
+  providerMode: "official",
   supportsVision: null
 };
 
@@ -1513,9 +1514,16 @@ function ApiKeySettings() {
   const [draftSettings, setDraftSettings] = useState(settings);
   const [connectionStatus, setConnectionStatus] = useState("");
   const [isTestingConnection, setIsTestingConnection] = useState(false);
-  const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
+  const [isPresetListOpen, setIsPresetListOpen] = useState(false);
+  const [isOfficialConfigOpen, setIsOfficialConfigOpen] = useState(false);
   const modalRef = useRef(null);
   const triggerRef = useRef(null);
+  const providerMode = draftSettings.providerMode === "custom" ? "custom" : "official";
+  const selectedPreset = providerMode === "official"
+    ? providerPresets.find((provider) => provider.baseUrl === draftSettings.baseUrl) || providerPresets[0]
+    : null;
+  const officialBaseUrl = draftSettings.baseUrl || "https://api.openai.com/v1";
+  const officialModel = draftSettings.model || "gpt-5.5";
 
   useEffect(() => {
     if (!isOpen) return undefined;
@@ -1554,15 +1562,23 @@ function ApiKeySettings() {
   }
 
   function saveSettings() {
-    if (draftSettings.baseUrl.trim() && !findProviderByBaseUrl(draftSettings.baseUrl.trim()) && !draftSettings.model.trim()) {
-      setConnectionStatus("使用自定义 API 时必须填写模型名。");
-      setIsAdvancedOpen(true);
+    if (!draftSettings.apiKey.trim()) {
+      setConnectionStatus("请先填写 API Key。");
+      return;
+    }
+    if (providerMode === "custom" && !draftSettings.baseUrl.trim()) {
+      setConnectionStatus("自定义兼容 API 必须填写 Base URL。");
+      return;
+    }
+    if (providerMode === "custom" && !draftSettings.model.trim()) {
+      setConnectionStatus("自定义兼容 API 必须填写模型名。");
       return;
     }
     const nextSettings = {
       apiKey: draftSettings.apiKey.trim(),
       baseUrl: draftSettings.baseUrl.trim(),
       model: draftSettings.model.trim(),
+      providerMode,
       supportsVision: draftSettings.supportsVision ?? null
     };
     persistSettings(nextSettings);
@@ -1579,27 +1595,37 @@ function ApiKeySettings() {
       ...current,
       baseUrl: provider.baseUrl,
       model: provider.model,
+      providerMode: "official",
       supportsVision: provider.supportsVisionByDefault
     }));
-    setIsAdvancedOpen(false);
+    setIsPresetListOpen(false);
     setConnectionStatus("");
   }
 
-  function useCustomProvider() {
-    setDraftSettings((current) => ({
-      ...current,
-      baseUrl: "",
-      model: "",
-      supportsVision: null
-    }));
-    setConnectionStatus("请填写公开 HTTPS Base URL 和该接口实际支持的模型名。");
-    setIsAdvancedOpen(true);
+  function selectProviderMode(mode) {
+    if (mode === providerMode) return;
+    if (mode === "custom") {
+      setDraftSettings((current) => ({
+        ...current,
+        baseUrl: "",
+        model: "",
+        providerMode: "custom",
+        supportsVision: null
+      }));
+      setConnectionStatus("请手动填写中转站提供的 Base URL 和模型名。");
+      return;
+    }
+    applyProviderPreset(providerPresets[0]);
   }
 
   async function testConnection() {
     setConnectionStatus("");
     if (!draftSettings.apiKey.trim()) {
       setConnectionStatus("请先填写 API Key。");
+      return;
+    }
+    if (providerMode === "custom" && (!draftSettings.baseUrl.trim() || !draftSettings.model.trim())) {
+      setConnectionStatus("自定义兼容 API 需要填写 Base URL 和模型名。");
       return;
     }
     setIsTestingConnection(true);
@@ -1632,7 +1658,14 @@ function ApiKeySettings() {
         className={`api-key-status-button${settings.apiKey ? " is-configured" : " is-missing"}`}
         type="button"
         onClick={() => {
-          setDraftSettings(settings);
+          const storedMode = settings.providerMode === "custom"
+            || (settings.baseUrl && !findProviderByBaseUrl(settings.baseUrl))
+            ? "custom"
+            : "official";
+          setDraftSettings({ ...settings, providerMode: storedMode });
+          setIsPresetListOpen(false);
+          setIsOfficialConfigOpen(false);
+          setConnectionStatus("");
           setIsOpen(true);
         }}
       >
@@ -1652,11 +1685,31 @@ function ApiKeySettings() {
           >
             <div className="modal-header">
               <div>
-                <h2 id="api-settings-title">选择 API 平台</h2>
-                <p>可选择平台预设，也可接入自定义 OpenAI 兼容接口。</p>
+                <h2 id="api-settings-title">设置 API</h2>
+                <p>选择官方平台预设，或手动接入兼容 OpenAI 的中转服务。</p>
               </div>
               <button className="icon-button" type="button" onClick={() => setIsOpen(false)} title="关闭设置">
                 <X size={17} />
+              </button>
+            </div>
+            <div className="api-provider-mode" role="group" aria-label="API 接入方式">
+              <button
+                className={providerMode === "official" ? "is-selected" : ""}
+                type="button"
+                onClick={() => selectProviderMode("official")}
+                aria-pressed={providerMode === "official"}
+              >
+                <span>一</span>
+                预设官方 API 平台
+              </button>
+              <button
+                className={providerMode === "custom" ? "is-selected" : ""}
+                type="button"
+                onClick={() => selectProviderMode("custom")}
+                aria-pressed={providerMode === "custom"}
+              >
+                <span>二</span>
+                自定义兼容 API
               </button>
             </div>
             <label className="api-key-input-label" htmlFor="api-key-input">
@@ -1671,57 +1724,99 @@ function ApiKeySettings() {
                 spellCheck="false"
               />
             </label>
-            <div className="provider-preset-list" aria-label="供应商预设">
-              {providerPresets.map((provider) => (
-                <article
-                  key={provider.id}
-                  className={`provider-preset${draftSettings.baseUrl === provider.baseUrl ? " provider-preset-selected" : ""}`}
+            {providerMode === "official" ? (
+              <div className="official-provider-settings">
+                <details
+                  className="api-settings-section"
+                  open={isPresetListOpen}
+                  onToggle={(event) => setIsPresetListOpen(event.currentTarget.open)}
                 >
-                  <div>
-                    <strong>{provider.name}</strong>
-                    <small>{provider.model || "后端默认模型"}</small>
+                  <summary>
+                    <span>官方平台</span>
+                    <small>当前：{selectedPreset?.name || "OpenAI 官方"}</small>
+                  </summary>
+                  <div className="provider-preset-list" aria-label="供应商预设">
+                    {providerPresets.map((provider) => (
+                      <article
+                        key={provider.id}
+                        className={`provider-preset${selectedPreset?.id === provider.id ? " provider-preset-selected" : ""}`}
+                      >
+                        <div>
+                          <strong>{provider.name}</strong>
+                          <small>{provider.model || "后端默认模型"}</small>
+                        </div>
+                        <p>{provider.note}</p>
+                        <div className="provider-actions">
+                          <button type="button" onClick={() => applyProviderPreset(provider)}>选择</button>
+                          <a href={provider.apiKeyUrl} target="_blank" rel="noreferrer">
+                            申请 Key <ExternalLink size={13} />
+                          </a>
+                        </div>
+                      </article>
+                    ))}
                   </div>
-                  <p>{provider.note}</p>
-                  <div className="provider-actions">
-                    <button type="button" onClick={() => applyProviderPreset(provider)}>选择</button>
-                    <a href={provider.apiKeyUrl} target="_blank" rel="noreferrer">
-                      申请 Key <ExternalLink size={13} />
-                    </a>
+                </details>
+                <details
+                  className="api-settings-section official-config"
+                  open={isOfficialConfigOpen}
+                  onToggle={(event) => setIsOfficialConfigOpen(event.currentTarget.open)}
+                >
+                  <summary>
+                    <span>自定义配置：Base URL 与模型名</span>
+                    <small>已由平台自动配置</small>
+                  </summary>
+                  <div className="api-config-fields">
+                    <label htmlFor="official-base-url-input">Base URL</label>
+                    <input
+                      id="official-base-url-input"
+                      value={officialBaseUrl}
+                      type="url"
+                      readOnly
+                    />
+                    <label htmlFor="official-model-input">模型名</label>
+                    <input
+                      id="official-model-input"
+                      value={officialModel}
+                      type="text"
+                      readOnly
+                    />
                   </div>
-                </article>
-              ))}
-            </div>
-            <button className="secondary-button custom-provider-button" type="button" onClick={useCustomProvider}>
-              使用自定义兼容 API
-            </button>
-            <details
-              className="advanced-settings"
-              open={isAdvancedOpen}
-              onToggle={(event) => setIsAdvancedOpen(event.currentTarget.open)}
-            >
-              <summary>自定义配置：Base URL 与模型名</summary>
-              <label htmlFor="base-url-input">Base URL</label>
-              <input
-                id="base-url-input"
-                value={draftSettings.baseUrl}
-                onChange={(event) => updateDraft("baseUrl", event.target.value)}
-                placeholder="例如 https://api.example.com/v1"
-                type="url"
-                autoComplete="off"
-                spellCheck="false"
-              />
-              <label htmlFor="model-input">模型名</label>
-              <input
-                id="model-input"
-                value={draftSettings.model}
-                onChange={(event) => updateDraft("model", event.target.value)}
-                placeholder="填写接口实际支持的模型名"
-                type="text"
-                autoComplete="off"
-                spellCheck="false"
-              />
-            </details>
-            <p className="modal-note">自定义接口必须兼容 OpenAI Chat Completions，使用公网 HTTPS 地址。API Key 保存在当前浏览器；服务端只转发请求，不会持久化。</p>
+                </details>
+                <p className="modal-note">选择平台后会自动填写兼容地址和默认模型，通常只需输入 API Key。</p>
+              </div>
+            ) : (
+              <div className="custom-provider-settings">
+                <div className="custom-provider-heading">
+                  <strong>自定义配置</strong>
+                  <span>必填</span>
+                </div>
+                <div className="api-config-fields">
+                  <label htmlFor="base-url-input">Base URL <em>必填</em></label>
+                  <input
+                    id="base-url-input"
+                    value={draftSettings.baseUrl}
+                    onChange={(event) => updateDraft("baseUrl", event.target.value)}
+                    placeholder="例如 https://api.example.com/v1"
+                    type="url"
+                    autoComplete="off"
+                    spellCheck="false"
+                    required
+                  />
+                  <label htmlFor="model-input">模型名 <em>必填</em></label>
+                  <input
+                    id="model-input"
+                    value={draftSettings.model}
+                    onChange={(event) => updateDraft("model", event.target.value)}
+                    placeholder="填写中转站实际支持的模型名"
+                    type="text"
+                    autoComplete="off"
+                    spellCheck="false"
+                    required
+                  />
+                </div>
+                <p className="modal-note">请使用中转站提供的 OpenAI 兼容地址和模型名；地址必须为公网 HTTPS。</p>
+              </div>
+            )}
             {connectionStatus ? <p className="connection-status" role="status">{connectionStatus}</p> : null}
             <div className="api-key-actions">
               <button className="secondary-button" type="button" onClick={() => setDraftSettings(defaultApiSettings)}>
