@@ -1,5 +1,7 @@
 import "dotenv/config";
 import OpenAI from "openai";
+import { lookup } from "node:dns/promises";
+import { BlockList, isIP } from "node:net";
 import { buildSystemPrompt } from "./promptProfiles.js";
 import { commandJsonSchema, solveJsonSchema } from "./solveSchema.js";
 import { findProviderByBaseUrl, getAllowedProviderHosts, providerPresets } from "../shared/providerPresets.js";
@@ -7,6 +9,28 @@ import { findProviderByBaseUrl, getAllowedProviderHosts, providerPresets } from 
 export { providerPresets };
 
 const allowedBaseUrlHosts = getAllowedProviderHosts();
+const blockedProviderAddresses = new BlockList();
+
+for (const [network, prefix] of [
+  ["0.0.0.0", 8],
+  ["10.0.0.0", 8],
+  ["100.64.0.0", 10],
+  ["127.0.0.0", 8],
+  ["169.254.0.0", 16],
+  ["172.16.0.0", 12],
+  ["192.0.0.0", 24],
+  ["192.168.0.0", 16],
+  ["198.18.0.0", 15],
+  ["224.0.0.0", 4],
+  ["240.0.0.0", 4]
+]) {
+  blockedProviderAddresses.addSubnet(network, prefix, "ipv4");
+}
+blockedProviderAddresses.addAddress("::", "ipv6");
+blockedProviderAddresses.addAddress("::1", "ipv6");
+blockedProviderAddresses.addSubnet("fc00::", 7, "ipv6");
+blockedProviderAddresses.addSubnet("fe80::", 10, "ipv6");
+blockedProviderAddresses.addSubnet("ff00::", 8, "ipv6");
 
 const defaultModelByHost = new Map(
   providerPresets.flatMap((provider) => provider.allowedHosts.map((host) => [host, provider.model]))
@@ -18,7 +42,7 @@ function buildJsonInstruction() {
     "JSON 必须符合 SolveResultV2，包含 schemaVersion、recognizedProblemText、problemSummary、mathType、problemContract、constructionSteps、objectManifest、ggbCommands、dynamicCandidates、dynamicControls、teachingNotes、viewport、warnings、followupQuestion。",
     "problemContract 必须忠实保存题目固定条件；不能补造题目未提供的方程或数值。",
     "constructionSteps 每项必须包含 id、text、objectLabels、stage。",
-    "如果存在自然可变对象，将其放入 dynamicCandidates；只有题目明确要求动态演示时才同步放入 dynamicControls。",
+    "如果存在自然可变对象，将其放入 dynamicCandidates 和 dynamicControls，课堂动态演示默认启用。",
     "mathType 只能是 geometry、function、analytic_geometry 或 solid_geometry。",
     "viewport 必须包含 xmin、xmax、ymin、ymax 四个数字。",
     "ggbCommands 必须是字符串数组，每个字符串是一条 GeoGebra 命令。"
@@ -105,15 +129,64 @@ export function normalizeBaseUrl(baseUrl) {
     throw error;
   }
 
-  const host = parsed.hostname;
-  const isAllowed = allowedBaseUrlHosts.includes(host) || host.endsWith(".maas.aliyuncs.com");
-  if (!isAllowed) {
-    const error = new Error("当前只允许已登记的 OpenAI 兼容官方地址。请在说明文档中选择供应商预设，或联系开发者补充白名单。");
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+    const error = new Error("Base URL 不能包含账号、密码、查询参数或片段。");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  if (
+    host === "localhost"
+    || host.endsWith(".localhost")
+    || host.endsWith(".local")
+    || host.endsWith(".internal")
+    || host === "metadata.google.internal"
+    || (isIP(host) && isBlockedProviderAddress(host))
+  ) {
+    const error = new Error("自定义 Base URL 不能指向本机、内网或保留地址。");
     error.statusCode = 400;
     throw error;
   }
 
   return parsed.href.replace(/\/$/, "");
+}
+
+function isBlockedProviderAddress(address) {
+  const family = isIP(address);
+  if (family === 4) return blockedProviderAddresses.check(address, "ipv4");
+  if (family === 6) {
+    const mappedIpv4 = address.toLowerCase().match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)?.[1];
+    if (mappedIpv4) return blockedProviderAddresses.check(mappedIpv4, "ipv4");
+    return blockedProviderAddresses.check(address, "ipv6");
+  }
+  return true;
+}
+
+export async function assertPublicProviderUrl(baseUrl) {
+  const normalized = normalizeBaseUrl(baseUrl);
+  if (!normalized) return normalized;
+
+  const hostname = new URL(normalized).hostname;
+  if (allowedBaseUrlHosts.includes(hostname) || hostname.endsWith(".maas.aliyuncs.com")) {
+    return normalized;
+  }
+
+  let addresses;
+  try {
+    addresses = await lookup(hostname, { all: true, verbatim: true });
+  } catch {
+    const error = new Error("无法解析自定义 API 的域名，请检查 Base URL。");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!addresses.length || addresses.some((entry) => isBlockedProviderAddress(entry.address))) {
+    const error = new Error("自定义 Base URL 解析到了本机、内网或保留地址，已拒绝连接。");
+    error.statusCode = 400;
+    throw error;
+  }
+  return normalized;
 }
 
 function extractJsonObject(text) {
@@ -227,11 +300,25 @@ function createOpenAIClient({ apiKey, baseUrl, model }) {
 
   const resolvedBaseUrl = normalizeBaseUrl(baseUrl);
   const resolvedHost = resolvedBaseUrl ? new URL(resolvedBaseUrl).hostname : "";
-  const providerDefaultModel = defaultModelByHost.get(resolvedHost) || "qwen-plus";
+  const provider = findProviderByBaseUrl(resolvedBaseUrl);
+  if (resolvedBaseUrl && !provider && !String(model || "").trim()) {
+    const error = new Error("使用自定义 API 时必须填写模型名。");
+    error.statusCode = 400;
+    throw error;
+  }
+  const providerDefaultModel = defaultModelByHost.get(resolvedHost) || "";
   const resolvedModel = model || process.env.OPENAI_MODEL || (resolvedBaseUrl ? providerDefaultModel : "gpt-5.5");
+  const customProviderFetch = resolvedBaseUrl && !provider
+    ? async (input, init) => {
+      const requestUrl = typeof input === "string" || input instanceof URL ? String(input) : input?.url;
+      await assertPublicProviderUrl(requestUrl || resolvedBaseUrl);
+      return fetch(input, { ...init, redirect: "error" });
+    }
+    : undefined;
   const client = new OpenAI({
     apiKey: resolvedApiKey,
-    ...(resolvedBaseUrl ? { baseURL: resolvedBaseUrl } : {})
+    ...(resolvedBaseUrl ? { baseURL: resolvedBaseUrl } : {}),
+    ...(customProviderFetch ? { fetch: customProviderFetch } : {})
   });
 
   return { client, resolvedBaseUrl, resolvedModel };

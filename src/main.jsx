@@ -52,7 +52,7 @@ import {
   enhanceTeachingDiagramCommands,
   getHighlightedAreaPolygonLabels
 } from "../shared/teachingDiagramEnhancer.js";
-import { providerPresets } from "../shared/providerPresets.js";
+import { findProviderByBaseUrl, providerPresets } from "../shared/providerPresets.js";
 import { validateSemanticContract } from "../shared/semanticValidator.js";
 import {
   PROMPT_VERSION,
@@ -1513,6 +1513,7 @@ function ApiKeySettings() {
   const [draftSettings, setDraftSettings] = useState(settings);
   const [connectionStatus, setConnectionStatus] = useState("");
   const [isTestingConnection, setIsTestingConnection] = useState(false);
+  const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
   const modalRef = useRef(null);
   const triggerRef = useRef(null);
 
@@ -1553,6 +1554,11 @@ function ApiKeySettings() {
   }
 
   function saveSettings() {
+    if (draftSettings.baseUrl.trim() && !findProviderByBaseUrl(draftSettings.baseUrl.trim()) && !draftSettings.model.trim()) {
+      setConnectionStatus("使用自定义 API 时必须填写模型名。");
+      setIsAdvancedOpen(true);
+      return;
+    }
     const nextSettings = {
       apiKey: draftSettings.apiKey.trim(),
       baseUrl: draftSettings.baseUrl.trim(),
@@ -1575,6 +1581,19 @@ function ApiKeySettings() {
       model: provider.model,
       supportsVision: provider.supportsVisionByDefault
     }));
+    setIsAdvancedOpen(false);
+    setConnectionStatus("");
+  }
+
+  function useCustomProvider() {
+    setDraftSettings((current) => ({
+      ...current,
+      baseUrl: "",
+      model: "",
+      supportsVision: null
+    }));
+    setConnectionStatus("请填写公开 HTTPS Base URL 和该接口实际支持的模型名。");
+    setIsAdvancedOpen(true);
   }
 
   async function testConnection() {
@@ -1634,7 +1653,7 @@ function ApiKeySettings() {
             <div className="modal-header">
               <div>
                 <h2 id="api-settings-title">选择 API 平台</h2>
-                <p>选择后会自动填写兼容地址和默认模型。</p>
+                <p>可选择平台预设，也可接入自定义 OpenAI 兼容接口。</p>
               </div>
               <button className="icon-button" type="button" onClick={() => setIsOpen(false)} title="关闭设置">
                 <X size={17} />
@@ -1672,14 +1691,21 @@ function ApiKeySettings() {
                 </article>
               ))}
             </div>
-            <details className="advanced-settings">
-              <summary>高级配置：Base URL 与模型名</summary>
+            <button className="secondary-button custom-provider-button" type="button" onClick={useCustomProvider}>
+              使用自定义兼容 API
+            </button>
+            <details
+              className="advanced-settings"
+              open={isAdvancedOpen}
+              onToggle={(event) => setIsAdvancedOpen(event.currentTarget.open)}
+            >
+              <summary>自定义配置：Base URL 与模型名</summary>
               <label htmlFor="base-url-input">Base URL</label>
               <input
                 id="base-url-input"
                 value={draftSettings.baseUrl}
                 onChange={(event) => updateDraft("baseUrl", event.target.value)}
-                placeholder="默认由平台预设填写"
+                placeholder="例如 https://api.example.com/v1"
                 type="url"
                 autoComplete="off"
                 spellCheck="false"
@@ -1689,13 +1715,13 @@ function ApiKeySettings() {
                 id="model-input"
                 value={draftSettings.model}
                 onChange={(event) => updateDraft("model", event.target.value)}
-                placeholder="默认由平台预设填写"
+                placeholder="填写接口实际支持的模型名"
                 type="text"
                 autoComplete="off"
                 spellCheck="false"
               />
             </details>
-            <p className="modal-note">API Key 保存在当前浏览器；发起解析时会经过本站后端转发，但服务端不会持久化。图片题需要选择支持视觉输入的模型。</p>
+            <p className="modal-note">自定义接口必须兼容 OpenAI Chat Completions，使用公网 HTTPS 地址。API Key 保存在当前浏览器；服务端只转发请求，不会持久化。</p>
             {connectionStatus ? <p className="connection-status" role="status">{connectionStatus}</p> : null}
             <div className="api-key-actions">
               <button className="secondary-button" type="button" onClick={() => setDraftSettings(defaultApiSettings)}>
