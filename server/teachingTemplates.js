@@ -1,3 +1,5 @@
+import { compileLineDistanceDihedralConstruction } from "../shared/parameterizedConstructionCompiler.js";
+
 function normalizeText(text) {
   return String(text ?? "").toLowerCase().replace(/\s+/g, "");
 }
@@ -205,6 +207,49 @@ function cubeSectionTemplate({ sideLength, sourceText }) {
   }, "正方体水平截面");
 }
 
+function lineDistanceDihedralTemplate({ distanceC, distanceD, angle, sourceText }) {
+  const edgeLength = 5;
+  const construction = compileLineDistanceDihedralConstruction({ distanceC, distanceD, angle, edgeLength });
+  return withTemplateWarning({
+    recognizedProblemText: sourceText,
+    problemSummary: `以 AB 为公共棱建立参数化空间模型，使 C、D 到 AB 的距离分别恒为 ${distanceC}、${distanceD}，且二面角 C-AB-D 恒为 ${angle}°。`,
+    mathType: "solid_geometry",
+    problemContract: {
+      originalText: sourceText,
+      mathType: "solid_geometry",
+      fixedExpressions: [],
+      requiredLabels: ["A", "B", "C", "D", "HC", "HD"],
+      requiredObjects: [],
+      constraints: [
+        { id: "distance-c-ab", type: "distance_to_line", objects: ["C", "A", "B"], value: distanceC, description: `C 到 AB 的距离为 ${distanceC}` },
+        { id: "distance-d-ab", type: "distance_to_line", objects: ["D", "A", "B"], value: distanceD, description: `D 到 AB 的距离为 ${distanceD}` },
+        { id: "dihedral-angle", type: "dihedral_angle", objects: ["C", "A", "B", "D"], value: angle, description: `二面角 C-AB-D 为 ${angle}°` }
+      ],
+      targets: ["比较 ∠CAD 与 60°", "分析 CD 与相关平面的垂直关系"],
+      locked: true
+    },
+    constructionSteps: [
+      { id: "step-1", text: "建立空间直角坐标系，使公共棱 AB 与 x 轴重合。", objectLabels: ["A", "B", "edgeAB"], stage: 1 },
+      { id: "step-2", text: `用参数 theta 控制径向方向，令 C 到 AB 的距离恒为 ${distanceC}。`, objectLabels: ["theta", "u", "C", "HC", "distanceC"], stage: 2 },
+      { id: "step-3", text: `将 C 的径向方向绕 AB 旋转 ${angle}°得到 D 的径向方向，并令 D 到 AB 的距离恒为 ${distanceD}。`, objectLabels: ["theta", "v", "D", "HD", "distanceD"], stage: 3 },
+      { id: "step-4", text: "连接 AC、AD、CD，动态观察角度、距离与垂直关系。", objectLabels: ["AC", "AD", "CD"], stage: 4 },
+      { id: "step-5", text: "用低透明度矩形区域表示半平面 ABC、ABD；圆柱轨迹和二面角角弧均不显示。", objectLabels: ["regionABC", "regionABD"], stage: 5 },
+      { id: "step-6", text: "保留平面 ABC、ABD、ACD 作为选项判断所需的隐藏计算对象。", objectLabels: ["planeABC", "planeABD", "planeACD"], stage: 6 }
+    ],
+    objectManifest: construction.objects,
+    ggbCommands: construction.commands,
+    dynamicControls: construction.dynamicControls,
+    dynamicCandidates: construction.dynamicControls.map((control) => ({ ...control, enabled: true, reason: "题目包含保持约束关系的动点" })),
+    viewport: { xmin: -1, xmax: 6, ymin: -1.5, ymax: Math.max(3, distanceC + 1) },
+    warnings: [],
+    generationMeta: {
+      templateId: "line-distance-dihedral-v5",
+      constructionStrategy: construction.strategy,
+      compilerVersion: construction.compilerVersion
+    }
+  }, "到直线距离与二面角");
+}
+
 function parseEllipseParameters(text) {
   const normalized = String(text || "").toLowerCase().replaceAll("²", "^2").replace(/\s+/g, "");
   const match = normalized.match(/x\^2\/(\d+(?:\.\d+)?)\+y\^2\/(\d+(?:\.\d+)?)=1/);
@@ -223,6 +268,24 @@ function parseCubeSideLength(text) {
   return sideLength > 0 ? { sideLength, sourceText: String(text).trim() } : null;
 }
 
+function parseLineDistanceDihedral(text) {
+  const normalized = String(text || "")
+    .replace(/[−—–]/g, "-")
+    .replace(/\s+/g, "");
+  if (!normalized.includes("二面角C-AB-D")) return null;
+
+  const distanceCMatch = normalized.match(/C到直线AB的距离(?:为|是|=)?(\d+(?:\.\d+)?)/);
+  const distanceDMatch = normalized.match(/D到直线AB的距离(?:为|是|=)?(\d+(?:\.\d+)?)/);
+  const angleMatch = normalized.match(/二面角C-AB-D(?:为|是|=)?(\d+(?:\.\d+)?)°?/);
+  if (!distanceCMatch || !distanceDMatch || !angleMatch) return null;
+
+  const distanceC = Number(distanceCMatch[1]);
+  const distanceD = Number(distanceDMatch[1]);
+  const angle = Number(angleMatch[1]);
+  if (!(distanceC > 0) || !(distanceD > 0) || !(angle > 0 && angle < 180)) return null;
+  return { distanceC, distanceD, angle, sourceText: String(text).trim() };
+}
+
 function parseQuadraticExpression(text) {
   const normalized = String(text || "").replaceAll("²", "^2");
   const match = normalized.match(/(?:f\s*\(\s*x\s*\)|y)\s*[=＝]\s*([^\u3400-\u9fff，。；;\n]+)/i);
@@ -236,6 +299,9 @@ function parseQuadraticExpression(text) {
 export function findTeachingTemplate(text) {
   const normalized = normalizeText(text);
   if (!normalized) return null;
+
+  const dihedralParameters = parseLineDistanceDihedral(text);
+  if (dihedralParameters) return lineDistanceDihedralTemplate(dihedralParameters);
 
   if ((normalized.includes("椭圆") || normalized.includes("ellipse"))
     && (normalized.includes("焦点") || normalized.includes("focus") || /f[₁1].*f[₂2]/i.test(String(text)))

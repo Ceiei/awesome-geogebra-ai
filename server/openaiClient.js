@@ -70,12 +70,18 @@ function buildCommandUserText({ problemSummary, mathType, problemContract, const
 }
 
 function buildUserContent({ text, image }) {
+  const imageInstruction = image
+    ? "请在一次响应中完成题图识别、题型判断和绘图方案生成。完整读取题干与全部选项，不要求用户再次确认识别文字；若附带文字像 OCR 草稿，应结合清晰题图纠正乱码、LaTeX 分隔符、上下标、角度和点名。recognizedProblemText 返回整理后的完整原题。"
+    : "";
   const content = [
     {
       type: "input_text",
-      text: text?.trim()
-        ? `题目文字：\n${text.trim()}`
-        : "用户上传了一张题目图片。请读取图片中的数学题，并构造最合适的 GeoGebra 可视化。"
+      text: [
+        imageInstruction,
+        text?.trim()
+          ? `附带题目文字：\n${text.trim()}`
+          : "用户上传了一张题目图片，请直接构造最合适的 GeoGebra 可视化。"
+      ].filter(Boolean).join("\n\n")
     }
   ];
 
@@ -90,10 +96,13 @@ function buildUserContent({ text, image }) {
 }
 
 function buildChatContent({ text, image }) {
+  const imageInstruction = image
+    ? "请在一次响应中完成题图识别、题型判断和绘图方案生成。完整读取题干与全部选项，不要求用户再次确认识别文字；若附带文字像 OCR 草稿，应结合清晰题图纠正乱码、LaTeX 分隔符、上下标、角度和点名。recognizedProblemText 返回整理后的完整原题。"
+    : "";
   const content = [
     {
       type: "text",
-      text: `${text?.trim() ? `题目文字：\n${text.trim()}` : "用户上传了一张题目图片。"}\n\n${buildJsonInstruction()}`
+      text: `${imageInstruction}\n\n${text?.trim() ? `附带题目文字：\n${text.trim()}` : "用户上传了一张题目图片。"}\n\n${buildJsonInstruction()}`
     }
   ];
 
@@ -206,7 +215,7 @@ function extractJsonObject(text) {
 }
 
 async function solveWithResponsesApi({ client, model, text, image }) {
-  const systemPrompt = buildSystemPrompt({ text });
+  const systemPrompt = buildSystemPrompt({ text, hasImage: Boolean(image) });
   const response = await client.responses.create({
     model,
     input: [
@@ -256,7 +265,7 @@ async function generateCommandsWithResponsesApi({ client, model, problemSummary,
 }
 
 async function solveWithChatCompletions({ client, model, text, image }) {
-  const systemPrompt = buildSystemPrompt({ text });
+  const systemPrompt = buildSystemPrompt({ text, hasImage: Boolean(image) });
   const response = await client.chat.completions.create({
     model,
     messages: [
@@ -340,6 +349,28 @@ function parseModelJson(output) {
   }
 }
 
+export function parseRecognitionOutput(output) {
+  try {
+    const parsed = parseModelJson(output);
+    const payload = parsed?.data && typeof parsed.data === "object" ? parsed.data : parsed;
+    return {
+      recognizedText: String(
+        payload?.recognizedText || payload?.recognizedProblemText || payload?.text || payload?.content || ""
+      ).trim(),
+      uncertainties: Array.isArray(payload?.uncertainties) ? payload.uncertainties : []
+    };
+  } catch (error) {
+    const plainText = String(output || "")
+      .replace(/^```(?:text|markdown)?\s*/i, "")
+      .replace(/```$/i, "")
+      .trim();
+    if (!plainText || /an error occurred|internal server error|function invocation failed|<html/i.test(plainText)) {
+      throw error;
+    }
+    return { recognizedText: plainText, uncertainties: [] };
+  }
+}
+
 export async function solveWithOpenAI({ text, image, apiKey, baseUrl, model }) {
   const { client, resolvedBaseUrl, resolvedModel } = createOpenAIClient({ apiKey, baseUrl, model });
 
@@ -410,7 +441,7 @@ export async function reviewConstructionSemanticsWithOpenAI({
   };
 }
 
-export async function recognizeProblemWithOpenAI({ image, apiKey, baseUrl, model }) {
+export async function recognizeProblemWithOpenAI({ image, text, apiKey, baseUrl, model }) {
   if (!image) {
     const error = new Error("请上传需要识别的题目图片。");
     error.statusCode = 400;
@@ -421,8 +452,10 @@ export async function recognizeProblemWithOpenAI({ image, apiKey, baseUrl, model
     "识别图片中的高中数学题，只返回 JSON。",
     "字段：recognizedText 字符串；uncertainties 数组。",
     "uncertainties 每项包含 text、reason、suggestion。",
-    "保留公式、上下标、角度符号和点名，不要解题。"
-  ].join("\n");
+    "保留公式、上下标、角度符号和点名，不要解题。",
+    "必须识别完整题干和全部选项。若图片包含几何图形，请在 recognizedText 末尾增加“图形信息”，描述图中的点、线、曲线、位置关系和数值标注。",
+    text?.trim() ? `下面是可能不准确的已有文字，请结合图片纠正并补全，不要直接照抄：\n${text.trim()}` : ""
+  ].filter(Boolean).join("\n");
 
   let output;
   if (resolvedBaseUrl) {
@@ -433,7 +466,7 @@ export async function recognizeProblemWithOpenAI({ image, apiKey, baseUrl, model
         {
           role: "user",
           content: [
-            { type: "text", text: "请识别这张题目图片。" },
+            { type: "text", text: "请完整识别题目，并将配图中的数学关系写入图形信息。" },
             { type: "image_url", image_url: { url: `data:${image.mimetype};base64,${image.buffer.toString("base64")}` } }
           ]
         }
@@ -448,10 +481,13 @@ export async function recognizeProblemWithOpenAI({ image, apiKey, baseUrl, model
         { role: "system", content: instruction },
         {
           role: "user",
-          content: [{
-            type: "input_image",
-            image_url: `data:${image.mimetype};base64,${image.buffer.toString("base64")}`
-          }]
+          content: [
+            { type: "input_text", text: "请完整识别题目，并将配图中的数学关系写入图形信息。" },
+            {
+              type: "input_image",
+              image_url: `data:${image.mimetype};base64,${image.buffer.toString("base64")}`
+            }
+          ]
         }
       ],
       text: { format: { type: "json_object" } }
@@ -459,7 +495,7 @@ export async function recognizeProblemWithOpenAI({ image, apiKey, baseUrl, model
     output = response.output_text;
   }
 
-  const parsed = parseModelJson(output);
+  const parsed = parseRecognitionOutput(output);
   return {
     recognizedText: String(parsed.recognizedText || "").trim(),
     uncertainties: Array.isArray(parsed.uncertainties)

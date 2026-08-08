@@ -120,6 +120,7 @@ export function assessRenderQuality({ api, commands, commandResults, dynamicCont
 
   const missingControls = safeControls
     .map((control) => control.name)
+    .filter((name) => !/_(?:axial|rotation)$/i.test(name))
     .filter((name) => !hasDefinedObject(api, name, safeObjectNames));
   if (missingControls.length) {
     issues.push(`动态参数未生成：${missingControls.join("、")}`);

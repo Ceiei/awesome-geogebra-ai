@@ -106,4 +106,45 @@ describe("semantic validator", () => {
     });
     expect(report.ok).toBe(true);
   });
+
+  it("checks point-to-line distances and a dihedral angle numerically", () => {
+    const spatialContract = {
+      ...contract,
+      originalText: "二面角 C-AB-D 为 60°",
+      mathType: "solid_geometry",
+      fixedExpressions: [],
+      requiredLabels: ["A", "B", "C", "D"],
+      constraints: [
+        { type: "distance_to_line", objects: ["C", "A", "B"], value: 2 },
+        { type: "distance_to_line", objects: ["D", "A", "B"], value: 1 },
+        { type: "dihedral_angle", objects: ["C", "A", "B", "D"], value: 60 }
+      ]
+    };
+    const commands = ["A=(0,0,0)", "B=(5,0,0)", "C=(2,2,0)", "D=(3,0.5,0.8660254038)"];
+    const objectStates = {
+      A: { coordinates: [0, 0, 0] },
+      B: { coordinates: [5, 0, 0] },
+      C: { coordinates: [2, 2, 0] },
+      D: { coordinates: [3, 0.5, 0.8660254038] }
+    };
+
+    const valid = validateSemanticContract({
+      contract: spatialContract,
+      mathType: "solid_geometry",
+      commands,
+      objectStates
+    });
+    expect(valid).toMatchObject({ ok: true, requiresSemanticReview: false });
+
+    const invalid = validateSemanticContract({
+      contract: spatialContract,
+      mathType: "solid_geometry",
+      commands,
+      objectStates: { ...objectStates, D: { coordinates: [3, 0, 1] } }
+    });
+    expect(invalid.ok).toBe(false);
+    expect(invalid.issues.map((issue) => issue.code)).toEqual(expect.arrayContaining([
+      "constraint_dihedral_angle"
+    ]));
+  });
 });

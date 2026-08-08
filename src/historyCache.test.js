@@ -45,6 +45,17 @@ describe("history cache", () => {
     expect(findHistoryCacheHit(history, cacheKey, { text: "题目", hasImage: false })).toBeNull();
   });
 
+  it("always bypasses matching history for an explicit reparse", () => {
+    const cacheKey = createHistoryCacheKey({ text: "题目" });
+    const history = [{ id: "cached", cacheKey, promptText: "题目" }];
+
+    expect(findHistoryCacheHit(history, cacheKey, {
+      text: "题目",
+      hasImage: false,
+      forceReparse: true
+    })).toBeNull();
+  });
+
   it("reads current history first and falls back to legacy history for manual selection", () => {
     const storage = new Map([
       ["current", JSON.stringify([{ id: "new", promptText: "新题" }])],

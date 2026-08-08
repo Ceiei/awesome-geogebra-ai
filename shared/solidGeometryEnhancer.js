@@ -21,7 +21,10 @@ const squarePyramidEdges = [
   ["edgeSA", "S", "A"], ["edgeSB", "S", "B"], ["edgeSC", "S", "C"], ["edgeSD", "S", "D"]
 ];
 
-const SOLID_FACE_FILLING = 0.04;
+const SOLID_FACE_FILLING = 0.025;
+const SOLID_TARGET_REGION_FILLING = 0.14;
+const INFINITE_PLANE_FILLING = 0.045;
+const INFINITE_PLANE_COLOR = "148,163,184";
 const EDGE_COLOR = "31,41,55";
 const KEY_SEGMENT_COLOR = "17,24,39";
 const AUXILIARY_FACE_COLOR = "96,165,250";
@@ -63,7 +66,13 @@ function canonicalFaceKey(points) {
   return [...points].sort().join("|");
 }
 
-function normalizeSolidCommand(command, assignedPolygonFaces, visualObjectLabels) {
+function getSolidPolygonFilling(label) {
+  return /^(?:face|plane|base|side)/i.test(label)
+    ? SOLID_FACE_FILLING
+    : SOLID_TARGET_REGION_FILLING;
+}
+
+function normalizeSolidCommand(command, assignedPolygonFaces, assignedPlaneLabels, visualObjectLabels) {
   if (isDuplicatePointTextLabel(command)) return null;
 
   const unlabeledPolygon = command.match(/^\s*Polygon\s*[\[(]\s*([^)]+?)\s*[\])]\s*$/i);
@@ -75,7 +84,10 @@ function normalizeSolidCommand(command, assignedPolygonFaces, visualObjectLabels
   const filling = command.match(/^SetFilling\s*[\[(]\s*([A-Za-z][A-Za-z0-9_]*)\s*,\s*(\d+(?:\.\d+)?)\s*[\])]\s*$/i);
   if (filling) {
     const [, label, value] = filling;
-    const nextValue = Math.min(Number(value), SOLID_FACE_FILLING);
+    const fillingLimit = assignedPlaneLabels.has(label)
+      ? INFINITE_PLANE_FILLING
+      : getSolidPolygonFilling(label);
+    const nextValue = Math.min(Number(value), fillingLimit);
     return `SetFilling(${label},${nextValue})`;
   }
 
@@ -108,7 +120,7 @@ function addEdgeTemplate(enhanced, labels, requiredLabels, edgeTemplate) {
     if (!hasSegment(enhanced, first, second)) {
       enhanced.push(`${edgeLabel}=Segment(${first},${second})`);
       enhanced.push(`SetColor(${edgeLabel},${EDGE_COLOR})`);
-      enhanced.push(`SetLineThickness(${edgeLabel},4)`);
+      enhanced.push(`SetLineThickness(${edgeLabel},3)`);
       enhanced.push(`ShowLabel(${edgeLabel},false)`);
     }
   }
@@ -127,6 +139,8 @@ export function enhanceSolidGeometryCommands({ mathType, commands }) {
   if (mathType !== "solid_geometry" || !Array.isArray(commands)) return commands;
 
   const assignedPolygonFaces = new Set(getAssignedPolygonLabels(commands).map((polygon) => canonicalFaceKey(polygon.points)));
+  const assignedPlanes = getAssignedPlaneLabels(commands);
+  const assignedPlaneLabels = new Set(assignedPlanes.map((plane) => plane.label));
   const visualObjectLabels = new Set(
     commands.flatMap((command) => {
       const match = command.match(/^\s*([A-Za-z][A-Za-z0-9_]*)\s*=\s*(Segment|Polygon|Plane)\s*[\[(]/i);
@@ -134,7 +148,7 @@ export function enhanceSolidGeometryCommands({ mathType, commands }) {
     })
   );
   const enhanced = commands
-    .map((command) => normalizeSolidCommand(command, assignedPolygonFaces, visualObjectLabels))
+    .map((command) => normalizeSolidCommand(command, assignedPolygonFaces, assignedPlaneLabels, visualObjectLabels))
     .filter(Boolean);
   const labels = new Set(
     enhanced.flatMap((command) => {
@@ -164,19 +178,19 @@ export function enhanceSolidGeometryCommands({ mathType, commands }) {
       enhanced.push(`ShowLabel(${label},true)`);
     }
     enhanced.push(`SetColor(${label},${POINT_COLOR})`);
-    enhanced.push("SetPointSize(" + label + ",6)");
+    enhanced.push("SetPointSize(" + label + ",4)");
   }
 
   for (const polygon of getAssignedPolygonLabels(enhanced)) {
-    enhanced.push(`SetFilling(${polygon.label},${SOLID_FACE_FILLING})`);
+    enhanced.push(`SetFilling(${polygon.label},${getSolidPolygonFilling(polygon.label)})`);
     enhanced.push(`SetColor(${polygon.label},${AUXILIARY_FACE_COLOR})`);
     enhanced.push(`ShowLabel(${polygon.label},false)`);
   }
 
-  for (const plane of getAssignedPlaneLabels(commands)) {
-    if (!hasCommand(enhanced, new RegExp(`^\\s*SetVisible\\s*[\\[(]\\s*${plane.label}\\s*,\\s*false`, "i"))) {
-      enhanced.push(`SetVisible(${plane.label},false)`);
-    }
+  for (const plane of assignedPlanes) {
+    enhanced.push(`SetFilling(${plane.label},${INFINITE_PLANE_FILLING})`);
+    enhanced.push(`SetColor(${plane.label},${INFINITE_PLANE_COLOR})`);
+    enhanced.push(`ShowLabel(${plane.label},false)`);
 
     const oppositePoint = plane.points.find((point) => (
       !point.endsWith("1")
@@ -196,11 +210,11 @@ export function enhanceSolidGeometryCommands({ mathType, commands }) {
   }
 
   if (labels.has("D") && labels.has("E") && !hasCommand(enhanced, /^\s*SetLineThickness\s*[\[(]\s*DE\s*,/i)) {
-    enhanced.push("SetLineThickness(DE,5)");
+    enhanced.push("SetLineThickness(DE,4)");
   }
   if (labels.has("DE")) {
     enhanced.push(`SetColor(DE,${KEY_SEGMENT_COLOR})`);
-    enhanced.push("SetLineThickness(DE,5)");
+    enhanced.push("SetLineThickness(DE,4)");
     enhanced.push("ShowLabel(DE,false)");
   }
 

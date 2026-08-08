@@ -16,6 +16,29 @@ describe("prompt profiles", () => {
     expect(prompt).toContain("filling at most 0.04");
   });
 
+  it("selects the solid geometry profile for the uploaded dihedral-angle problem", () => {
+    const text = "在空间中，A、B为两个定点，动点C到直线AB的距离为2，动点D到直线AB的距离为1。若二面角C-AB-D为60°，判断各选项。";
+    const profile = getPromptProfileSummary({ text });
+    const prompt = buildSystemPrompt({ text });
+
+    expect(profile).toEqual({ id: "solid_geometry", subType: "solid_spatial_relation" });
+    expect(prompt).toContain("AB is the common edge");
+    expect(prompt).toContain("Do not replace it with the ordinary point angle CAD");
+    expect(prompt).toContain("parameterize its axial position and radial angle with native GeoGebra Slider objects");
+    expect(prompt).toContain("use one shared radial-angle slider theta");
+    expect(prompt).toContain("Do not rely on frontend-only control names");
+    expect(prompt).toContain("Do not add an Angle object");
+  });
+
+  it("infers the profile from an image instead of defaulting to plane geometry", () => {
+    const profile = getPromptProfileSummary({ hasImage: true });
+    const prompt = buildSystemPrompt({ hasImage: true });
+
+    expect(profile).toEqual({ id: "image", subType: "infer_from_image" });
+    expect(prompt).toContain("PROFILE: infer the teaching profile from the uploaded problem image.");
+    expect(prompt).toContain("a dihedral angle");
+  });
+
   it("selects analytic geometry conic rules for parabola locus problems", () => {
     const profile = getPromptProfileSummary({
       text: "已知抛物线 y²=4x，过点 T 的直线交抛物线于 A、B，求中点 M 的轨迹和三角形面积。"

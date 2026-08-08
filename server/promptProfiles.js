@@ -12,9 +12,13 @@ function includesAny(source, keywords) {
   return keywords.some((keyword) => source.includes(keyword));
 }
 
-export function classifyPromptProfile({ text = "", mathType = "", constructionSteps = [] } = {}) {
+export function classifyPromptProfile({ text = "", mathType = "", constructionSteps = [], hasImage = false } = {}) {
   const source = compactText([text, ...constructionSteps].join(" "));
   const normalizedMathType = profileIds.has(mathType) ? mathType : "";
+
+  if (!source && !normalizedMathType && hasImage) {
+    return { id: "image", subType: "infer_from_image" };
+  }
 
   const solidKeywords = [
     "立体",
@@ -123,6 +127,7 @@ function buildBasePrompt() {
     "Expose only parameters that are useful for classroom demonstration. Do not create sliders for fixed constants unless the problem explicitly asks how that constant varies.",
     "For dynamicCandidates and dynamicControls, use teacher-facing labels such as '动点 P 的位置', '直线斜率', '区间左端点', or '截面高度', not abstract labels like 'parameter t'.",
     "When the task asks for or implies area, create a named Polygon for the target region, compute Area(polygon), and style the region with translucent filling so the area is visually obvious.",
+    "For a multiple-choice problem, preserve the complete stem and all options in recognizedProblemText. Build one non-degenerate model satisfying only the given conditions, and include the auxiliary objects needed to inspect the claims without silently assuming an option is true.",
     "Use concise Text only for meaningful measurements or role explanations. Do not duplicate point labels with Text when GeoGebra point labels already show the name.",
     "Do not generate JavaScript, HTML, scripts, buttons, file operations, network operations, or destructive commands.",
     "Prefer clear free points and construction objects that remain draggable in GeoGebra.",
@@ -192,12 +197,28 @@ function buildSolidGeometryPrompt({ subType }) {
     "Use infinite Plane objects only for calculations, then hide them with SetVisible(plane,false). For visible faces or auxiliary planes, draw finite Polygon objects with filling at most 0.04 so they do not obscure the solid.",
     "Do not use Text to duplicate point names such as Text(\"A\", A, true). Use ShowLabel(A,true) for key points and ShowLabel(edge,false) for edges/faces/planes.",
     "For line-plane angle, define the line and plane first, then use Angle(Line(D,E),planeName).",
+    "For a dihedral angle such as C-AB-D, AB is the common edge of the two half-planes. Do not replace it with the ordinary point angle CAD. Make AB, both half-planes or representative faces, the perpendicular distances to AB, and a perpendicular cross-section visible. Preserve the stated dihedral angle and distance values in the coordinates.",
+    "For a moving point whose distance to a line is fixed, parameterize its axial position and radial angle with native GeoGebra Slider objects. Define the point from those parameters so the fixed distance is true for every slider value. Do not display the cylinder surface unless the problem explicitly asks for the locus.",
+    "When AB is the x-axis and dihedral C-AB-D=alpha, use one shared radial-angle slider theta and native formulas such as C=(u,r1*cos(theta*pi/180),r1*sin(theta*pi/180)) and D=(v,r2*cos((theta+alpha)*pi/180),r2*sin((theta+alpha)*pi/180)). Every dynamicControls entry must name a real GeoGebra slider. Do not rely on frontend-only control names or on y(C)/z(C) rotation expressions. Do not add an Angle object or angle-value annotation unless the problem explicitly asks to measure the angle.",
+    "For a spatial multiple-choice problem, preserve all givens in one parameterized construction and draw only the objects needed to inspect the options. Do not replace a general moving-point model with an inconsistent decorative example.",
     "For distance from a line/point to a plane, define the plane and a representative distance object. When useful, draw a perpendicular helper segment or foot point so the distance is visible.",
     "Keep 3D diagrams visually quiet: transparent faces, consistent edge color, limited labels, and no overlapping explanatory text near the solid."
   ].join("\n");
 }
 
+function buildImageProblemPrompt() {
+  return [
+    "PROFILE: infer the teaching profile from the uploaded problem image.",
+    "Read the complete stem and every visible option before selecting mathType.",
+    "If the image mentions space, a solid, a plane, a dihedral angle, a line-plane angle, or distances in space, select solid_geometry and use true 3D coordinates.",
+    "If it contains a conic, coordinate equation, focus, directrix, tangent, secant, or locus, select analytic_geometry.",
+    "If it primarily asks about a function graph, extrema, monotonicity, roots, or intervals, select function. Otherwise select geometry.",
+    "After classification, follow the corresponding teaching-diagram rules: show all given objects, necessary perpendicular or projection helpers, requested regions, and meaningful labels."
+  ].join("\n");
+}
+
 function buildProfilePrompt(profile) {
+  if (profile.id === "image") return buildImageProblemPrompt();
   if (profile.id === "solid_geometry") return buildSolidGeometryPrompt(profile);
   if (profile.id === "analytic_geometry") return buildAnalyticGeometryPrompt(profile);
   if (profile.id === "function") return buildFunctionPrompt(profile);

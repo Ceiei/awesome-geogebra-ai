@@ -20,6 +20,34 @@ describe("solve API", () => {
     expect(response.body.error).toContain("请输入题目");
   });
 
+  it("accepts an image-only problem without a separate OCR confirmation request", async () => {
+    process.env.USE_MOCK_AI = "1";
+    const response = await request(createApp())
+      .post("/api/solve")
+      .attach("image", Buffer.from("image bytes"), {
+        filename: "solid-geometry.png",
+        contentType: "image/png"
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.schemaVersion).toBe(2);
+    expect(response.body.ggbCommands.length).toBeGreaterThan(0);
+  });
+
+  it("accepts existing text as a hint during image recognition", async () => {
+    process.env.USE_MOCK_AI = "1";
+    const response = await request(createApp())
+      .post("/api/recognize")
+      .field("text", "在空间中，二面角 C-AB-D 为 60°。")
+      .attach("image", Buffer.from("image bytes"), {
+        filename: "solid-geometry.png",
+        contentType: "image/png"
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.recognizedText).toBe("在空间中，二面角 C-AB-D 为 60°。");
+  });
+
   it("marks API responses as non-cacheable and attaches a trace id", async () => {
     process.env.USE_MOCK_AI = "1";
     const response = await request(createApp()).get("/api/health");
@@ -265,6 +293,40 @@ describe("solve API", () => {
       "P=(0,0,h)",
       "section=Polygon(P,Q,R,U)"
     ]));
+  });
+
+  it("uses a constraint-preserving template for line distances and a dihedral angle", async () => {
+    process.env.USE_MOCK_AI = "1";
+    const problem = "10. 在空间中，A、B为两个定点，动点C到直线AB的距离为2，动点D到直线AB的距离为1．若二面角C−AB−D为60°，则（ ） A. ∠CAD≥60° B. CD≥√3 C. 当AB⊥CD时，CD⊥平面ABD D. 当AB⊥平面ACD时，AC⊥AD";
+    const response = await request(createApp())
+      .post("/api/solve")
+      .field("text", problem);
+
+    expect(response.status).toBe(200);
+    expect(response.body.mathType).toBe("solid_geometry");
+    expect(response.body.generationMeta).toMatchObject({
+      templateId: "line-distance-dihedral-v5",
+      constructionStrategy: "native-parameterization",
+      compilerVersion: "line-distance-dihedral-v1"
+    });
+    expect(response.body.dynamicControls).toEqual([
+      { name: "theta", description: "点 C、D 绕 AB 旋转", min: -180, max: 180, step: 1 },
+      { name: "u", description: "点 C 沿 AB 的位置", min: 0.5, max: 4.5, step: 0.1 },
+      { name: "v", description: "点 D 沿 AB 的位置", min: 0.5, max: 4.5, step: 0.1 }
+    ]);
+    expect(response.body.ggbCommands).toEqual(expect.arrayContaining([
+      "C=(u,2*cos(theta*pi/180),2*sin(theta*pi/180))",
+      "D=(v,1*cos((theta+60)*pi/180),1*sin((theta+60)*pi/180))",
+      "distanceC=Segment(C,HC)",
+      "distanceD=Segment(D,HD)",
+      "regionABC=Polygon(A,B,CFrame1,CFrame0)",
+      "regionABD=Polygon(A,B,DFrame1,DFrame0)",
+      "SetFilling(regionABC,0.08)",
+      "SetFilling(regionABD,0.08)"
+    ]));
+    expect(response.body.ggbCommands.some((command) => /Cylinder/i.test(command))).toBe(false);
+    expect(response.body.ggbCommands.some((command) => /=Angle\(/i.test(command))).toBe(false);
+    expect(response.body.semanticReport).toMatchObject({ ok: true, requiresSemanticReview: false });
   });
 
   it("rejects unsupported image MIME types", async () => {

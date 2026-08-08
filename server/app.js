@@ -52,6 +52,7 @@ export function createApp() {
       }
       const result = await recognizeProblemWithOpenAI({
         image: req.file,
+        text: String(req.body?.text || ""),
         ...readProviderHeaders(req)
       });
       return res.json({ ...result, traceId: req.traceId });
@@ -134,13 +135,9 @@ export function createApp() {
         model
       };
 
-      const templateResult = findTeachingTemplate([
-        commandRequest.problemSummary,
-        ...constructionSteps.map((step) => typeof step === "string" ? step : step.text)
-      ].join(" "));
-      const rawResult = templateResult || (process.env.USE_MOCK_AI === "1"
+      const rawResult = process.env.USE_MOCK_AI === "1"
         ? buildMockCommandsFromSteps(commandRequest)
-        : await generateCommandsWithOpenAI(commandRequest));
+        : await generateCommandsWithOpenAI(commandRequest);
 
       const generated = normalizeSolveResult({
         ...rawResult,
@@ -188,7 +185,10 @@ export function createApp() {
       }
       const lock = createRepairLock(current);
       const provider = readProviderHeaders(req);
-      const rawResult = process.env.USE_MOCK_AI === "1"
+      const deterministicRepair = current.generationMeta?.constructionStrategy === "native-parameterization"
+        ? findTeachingTemplate(current.problemContract.originalText)
+        : null;
+      const rawResult = deterministicRepair || (process.env.USE_MOCK_AI === "1"
         ? buildMockCommandsFromSteps({
           ...current,
           constructionSteps: current.constructionSteps
@@ -201,13 +201,14 @@ export function createApp() {
           viewport: current.viewport,
           repairContext: body.runtimeReport || {},
           ...provider
-        });
+        }));
       const normalized = normalizeSolveResult({
         ...rawResult,
         problemSummary: lock.problemSummary,
         mathType: lock.mathType,
         problemContract: lock.problemContract,
-        recognizedProblemText: lock.recognizedProblemText
+        recognizedProblemText: lock.recognizedProblemText,
+        constructionSteps: current.constructionSteps
       }, { sourceText: lock.recognizedProblemText, model: provider.model });
       const repaired = applyRepairWithinLock(current, normalized, lock);
       const semanticReport = validateSemanticContract({

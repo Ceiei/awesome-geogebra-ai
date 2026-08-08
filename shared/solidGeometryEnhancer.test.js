@@ -16,13 +16,15 @@ describe("solid geometry command enhancement", () => {
       "edgeAB=Segment(A,B)", "edgeBC=Segment(B,C)", "edgeCA=Segment(C,A)",
       "edgeA1B1=Segment(A1,B1)", "edgeB1C1=Segment(B1,C1)", "edgeC1A1=Segment(C1,A1)",
       "edgeAA1=Segment(A,A1)", "edgeBB1=Segment(B,B1)", "edgeCC1=Segment(C,C1)",
-      "SetVisible(plane1,false)", "SetVisible(plane2,false)",
+      "SetFilling(plane1,0.045)", "SetFilling(plane2,0.045)",
+      "SetColor(plane1,148,163,184)", "SetColor(plane2,148,163,184)",
+      "ShowLabel(plane1,false)", "ShowLabel(plane2,false)",
       "faceplane1=Polygon(C,B,C1,B1)", "faceplane2=Polygon(A,C,C1,A1)",
-      "SetFilling(faceplane1,0.04)", "SetFilling(faceplane2,0.04)",
+      "SetFilling(faceplane1,0.025)", "SetFilling(faceplane2,0.025)",
       "SetColor(faceplane1,96,165,250)", "SetColor(faceplane2,96,165,250)",
-      "SetColor(A,37,99,235)", "SetPointSize(A,6)",
+      "SetColor(A,37,99,235)", "SetPointSize(A,4)",
       "ShowLabel(A,true)", "ShowLabel(B,true)", "ShowLabel(C,true)",
-      "SetLineThickness(DE,5)"
+      "SetLineThickness(DE,4)"
     ]));
   });
 
@@ -36,6 +38,20 @@ describe("solid geometry command enhancement", () => {
     expect(enhanced).not.toContain("edgeC1A1=Segment(C1,A1)");
     expect(enhanced).toContain("edgeCD=Segment(C,D)");
     expect(enhanced).toContain("edgeD1A1=Segment(D1,A1)");
+  });
+
+  it("keeps explicitly hidden calculation planes hidden", () => {
+    const commands = enhanceSolidGeometryCommands({
+      mathType: "solid_geometry",
+      commands: [
+        "A=(0,0,0)", "B=(1,0,0)", "C=(0,1,0)",
+        "calcPlane=Plane(A,B,C)",
+        "SetVisible(calcPlane,false)"
+      ]
+    });
+
+    expect(commands).toContain("SetVisible(calcPlane,false)");
+    expect(commands).toContain("SetFilling(calcPlane,0.045)");
   });
 
   it("does not alter non-solid constructions", () => {
@@ -72,7 +88,7 @@ describe("solid geometry command enhancement", () => {
 
     expect(commands).not.toContain("Polygon(B,C,C1)");
     expect(commands).toContain("face1=Polygon(C1,C,B)");
-    expect(commands).toContain("SetFilling(face1,0.04)");
+    expect(commands).toContain("SetFilling(face1,0.025)");
   });
 
   it("normalizes inconsistent AI colors for solid faces and key segments", () => {
@@ -97,9 +113,9 @@ describe("solid geometry command enhancement", () => {
     expect(commands).not.toContain("SetColor(DE,\"Red\")");
     expect(commands).not.toContain("SetLineThickness(DE,9)");
     expect(commands).toContain("SetColor(face1,96,165,250)");
-    expect(commands).toContain("SetFilling(face1,0.04)");
+    expect(commands).toContain("SetFilling(face1,0.025)");
     expect(commands).toContain("SetColor(DE,17,24,39)");
-    expect(commands).toContain("SetLineThickness(DE,5)");
+    expect(commands).toContain("SetLineThickness(DE,4)");
   });
 
   it("adds standard cube and square pyramid edge templates", () => {
@@ -114,5 +130,21 @@ describe("solid geometry command enhancement", () => {
       commands: ["A=(0,0,0)", "B=(1,0,0)", "C=(1,1,0)", "D=(0,1,0)", "S=(0.5,0.5,1)"]
     });
     expect(pyramidCommands).toEqual(expect.arrayContaining(["edgeAB=Segment(A,B)", "edgeSA=Segment(S,A)", "edgeSD=Segment(S,D)"]));
+  });
+
+  it("keeps target cross-sections clearer than auxiliary faces", () => {
+    const commands = enhanceSolidGeometryCommands({
+      mathType: "solid_geometry",
+      commands: [
+        "A=(0,0,0)", "B=(4,0,0)", "C=(4,4,0)", "D=(0,4,0)",
+        "section=Polygon(A,B,C,D)",
+        "faceHelper=Polygon(A,B,C)",
+        "SetFilling(section,0.3)",
+        "SetFilling(faceHelper,0.3)"
+      ]
+    });
+
+    expect(commands).toContain("SetFilling(section,0.14)");
+    expect(commands).toContain("SetFilling(faceHelper,0.025)");
   });
 });

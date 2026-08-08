@@ -138,14 +138,79 @@ export function getExplicitlyHiddenObjectLabels(commands) {
   }));
 }
 
-export function get3DCoordinateSystem(viewport) {
+export function getAngleDependencyLabels(commands) {
+  if (!Array.isArray(commands)) return new Set();
+
+  return new Set(commands.flatMap((rawCommand) => {
+    const command = normalizeOuterCommandBrackets(rawCommand);
+    const match = command.match(/(?:^|=)\s*Angle\s*\(([^)]+)\)/i);
+    if (!match) return [];
+    return match[1]
+      .split(",")
+      .map((argument) => argument.trim())
+      .filter((argument) => /^[A-Za-z][A-Za-z0-9_]*$/.test(argument));
+  }));
+}
+
+function getNumeric3DPoints(commands) {
+  const number = "[-+]?(?:\\d+(?:\\.\\d+)?|\\.\\d+)";
+  const pointPattern = new RegExp(`^\\s*[A-Za-z][A-Za-z0-9_]*\\s*=\\s*\\(\\s*(${number})\\s*,\\s*(${number})\\s*,\\s*(${number})\\s*\\)\\s*$`);
+  return (commands || []).flatMap((command) => {
+    const match = String(command).match(pointPattern);
+    return match ? [[Number(match[1]), Number(match[2]), Number(match[3])]] : [];
+  });
+}
+
+function paddedRange(values) {
+  const minimum = Math.min(...values);
+  const maximum = Math.max(...values);
+  const span = Math.max(2, maximum - minimum);
+  const padding = Math.max(1, span * 0.35);
+  return [minimum - padding, maximum + padding];
+}
+
+export function get3DCoordinateSystem(viewport = {}, commands = []) {
+  const points = getNumeric3DPoints(commands);
+  if (points.length >= 3) {
+    const [xmin, xmax] = paddedRange(points.map((point) => point[0]));
+    const [ymin, ymax] = paddedRange(points.map((point) => point[1]));
+    const [zmin, zmax] = paddedRange(points.map((point) => point[2]));
+    return [xmin, xmax, ymin, ymax, zmin, zmax, true];
+  }
+
+  const xmin = Number.isFinite(Number(viewport.xmin)) ? Number(viewport.xmin) : -6;
+  const xmax = Number.isFinite(Number(viewport.xmax)) ? Number(viewport.xmax) : 6;
+  const ymin = Number.isFinite(Number(viewport.ymin)) ? Number(viewport.ymin) : -6;
+  const ymax = Number.isFinite(Number(viewport.ymax)) ? Number(viewport.ymax) : 6;
   const extent = Math.max(
     4,
-    Math.abs(viewport.xmin),
-    Math.abs(viewport.xmax),
-    Math.abs(viewport.ymin),
-    Math.abs(viewport.ymax)
+    Math.abs(xmin),
+    Math.abs(xmax),
+    Math.abs(ymin),
+    Math.abs(ymax)
   );
 
-  return [viewport.xmin, viewport.xmax, viewport.ymin, viewport.ymax, -extent, extent, true];
+  return [xmin, xmax, ymin, ymax, -extent, extent, true];
+}
+
+export function get3DAutoZoomFactor(commands = []) {
+  return getNumeric3DPoints(commands).length >= 3 ? 1 : 3;
+}
+
+export function apply3DCanvasPresentation(api, { editorMode = false } = {}) {
+  api.setAxesVisible?.(3, true, true, true);
+  api.setGridVisible?.(3, false);
+  try {
+    api.setVisible?.("xOyPlane", editorMode);
+  } catch {
+    // Older applet builds may not expose the built-in coordinate plane as an object.
+  }
+}
+
+export function isInfinite3DPlane(api, label) {
+  try {
+    return String(api.getObjectType?.(label) || "").toLowerCase().includes("plane");
+  } catch {
+    return false;
+  }
 }

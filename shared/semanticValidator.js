@@ -133,8 +133,45 @@ function cross(first, second) {
   ];
 }
 
+function dot(first, second) {
+  return first.reduce((sum, value, index) => sum + value * (second[index] || 0), 0);
+}
+
+function pointToLineDistance(point, first, second) {
+  const direction = subtract(second, first, 3);
+  const offset = subtract(point, first, 3);
+  const denominator = Math.hypot(...direction);
+  return denominator > TOLERANCE ? Math.hypot(...cross(offset, direction)) / denominator : Number.NaN;
+}
+
+function perpendicularComponent(vector, axis) {
+  const denominator = dot(axis, axis);
+  if (denominator <= TOLERANCE) return null;
+  const scale = dot(vector, axis) / denominator;
+  return vector.map((value, index) => value - scale * (axis[index] || 0));
+}
+
 function checkCoordinateConstraint(constraint, objectStates) {
   const objects = constraint.objects || [];
+  if (constraint.type === "distance_to_line" && objects.length >= 3) {
+    const [point, first, second] = objects.map((label) => getCoordinates(objectStates, label));
+    if (!point || !first || !second || !Number.isFinite(Number(constraint.value))) return null;
+    const distance = pointToLineDistance(point, first, second);
+    return Number.isFinite(distance) && Math.abs(distance - Number(constraint.value)) <= 1e-4;
+  }
+  if (constraint.type === "dihedral_angle" && objects.length >= 4) {
+    const [firstFacePoint, edgeFirst, edgeSecond, secondFacePoint] = objects.map((label) => getCoordinates(objectStates, label));
+    if (!firstFacePoint || !edgeFirst || !edgeSecond || !secondFacePoint || !Number.isFinite(Number(constraint.value))) return null;
+    const edge = subtract(edgeSecond, edgeFirst, 3);
+    const firstPerpendicular = perpendicularComponent(subtract(firstFacePoint, edgeFirst, 3), edge);
+    const secondPerpendicular = perpendicularComponent(subtract(secondFacePoint, edgeFirst, 3), edge);
+    if (!firstPerpendicular || !secondPerpendicular) return null;
+    const denominator = Math.hypot(...firstPerpendicular) * Math.hypot(...secondPerpendicular);
+    if (denominator <= TOLERANCE) return false;
+    const cosine = Math.max(-1, Math.min(1, dot(firstPerpendicular, secondPerpendicular) / denominator));
+    const angle = Math.acos(cosine) * 180 / Math.PI;
+    return Math.abs(angle - Number(constraint.value)) <= 1e-3;
+  }
   if (constraint.type === "midpoint" && objects.length >= 3) {
     const [middle, first, second] = objects.map((label) => getCoordinates(objectStates, label));
     if (!middle || !first || !second) return null;
@@ -235,7 +272,14 @@ export function validateSemanticContract({
     issues,
     requiresSemanticReview: (contract?.constraints || []).some((item) => (
       item.type === "described"
-      || (mathType === "solid_geometry" && !["parallel", "perpendicular", "equal_length", "nonzero"].includes(item.type))
+      || (mathType === "solid_geometry" && ![
+        "parallel",
+        "perpendicular",
+        "equal_length",
+        "nonzero",
+        "distance_to_line",
+        "dihedral_angle"
+      ].includes(item.type))
     )),
     commandCount: (commands || []).length,
     objectCount: labels.size

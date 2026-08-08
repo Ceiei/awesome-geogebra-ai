@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
-import { executeGgbCommand, get3DCoordinateSystem, getExplicitlyHiddenObjectLabels } from "./ggbExecutor.js";
+import {
+  apply3DCanvasPresentation,
+  executeGgbCommand,
+  getAngleDependencyLabels,
+  get3DAutoZoomFactor,
+  get3DCoordinateSystem,
+  getExplicitlyHiddenObjectLabels,
+  isInfinite3DPlane
+} from "./ggbExecutor.js";
 
 describe("GeoGebra command executor", () => {
   it("normalizes command brackets before evaluation", () => {
@@ -73,9 +81,53 @@ describe("GeoGebra command executor", () => {
     ])]).toEqual(["vertical", "xAxisLine"]);
   });
 
+  it("extracts planes and lines used by 3D angle constructions", () => {
+    expect([...getAngleDependencyLabels([
+      "angleValue=Angle(edgeAB,plane1)",
+      "other=Distance(A,B)"
+    ])]).toEqual(["edgeAB", "plane1"]);
+  });
+
   it("sets an explicit z range for the 3D view", () => {
     expect(get3DCoordinateSystem({ xmin: -2, xmax: 5, ymin: -3, ymax: 8 })).toEqual([
       -2, 5, -3, 8, -8, 8, true
     ]);
+  });
+
+  it("fits the 3D view to numeric construction points", () => {
+    expect(get3DCoordinateSystem(
+      { xmin: -20, xmax: 20, ymin: -20, ymax: 20 },
+      ["A=(0,0,0)", "B=(4,0,0)", "C=(0,2,2)"]
+    )).toEqual([-1.4, 5.4, -1, 3, -1, 3, true]);
+  });
+
+  it("zooms dynamic 3D constructions that cannot be fitted from literal points", () => {
+    expect(get3DAutoZoomFactor([
+      "A=(0,0,0)",
+      "B=(5,0,0)",
+      "C=(u,2,0)",
+      "D=(v,0.5,0.866025)"
+    ])).toBe(3);
+    expect(get3DAutoZoomFactor([
+      "A=(0,0,0)",
+      "B=(5,0,0)",
+      "C=(2,2,0)"
+    ])).toBe(1);
+  });
+
+  it("uses a quiet 3D canvas outside the full editor", () => {
+    const api = {
+      setAxesVisible: vi.fn(),
+      setGridVisible: vi.fn(),
+      setVisible: vi.fn(),
+      getObjectType: vi.fn((label) => label === "p" ? "plane3d" : "segment")
+    };
+
+    apply3DCanvasPresentation(api);
+    expect(api.setAxesVisible).toHaveBeenCalledWith(3, true, true, true);
+    expect(api.setGridVisible).toHaveBeenCalledWith(3, false);
+    expect(api.setVisible).toHaveBeenCalledWith("xOyPlane", false);
+    expect(isInfinite3DPlane(api, "p")).toBe(true);
+    expect(isInfinite3DPlane(api, "edge")).toBe(false);
   });
 });

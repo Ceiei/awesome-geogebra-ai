@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertPublicProviderUrl, normalizeBaseUrl, testProviderConnection } from "./openaiClient.js";
+import { assertPublicProviderUrl, normalizeBaseUrl, parseRecognitionOutput, testProviderConnection } from "./openaiClient.js";
 
 describe("OpenAI compatible provider URLs", () => {
   it("accepts registered provider base URLs", () => {
@@ -35,5 +35,19 @@ describe("OpenAI compatible provider URLs", () => {
 
   it("rejects private provider targets before sending a request", async () => {
     await expect(assertPublicProviderUrl("https://127.0.0.1/v1")).rejects.toThrow("内网");
+  });
+
+  it("accepts plain OCR text from a non-strict compatible provider", () => {
+    expect(parseRecognitionOutput("在空间中，二面角 C-AB-D 为 60°。")).toEqual({
+      recognizedText: "在空间中，二面角 C-AB-D 为 60°。",
+      uncertainties: []
+    });
+  });
+
+  it("accepts common recognition response aliases", () => {
+    expect(parseRecognitionOutput(JSON.stringify({ data: { text: "完整题干" } }))).toEqual({
+      recognizedText: "完整题干",
+      uncertainties: []
+    });
   });
 });

@@ -1,4 +1,4 @@
-export const HISTORY_CACHE_VERSION = 6;
+export const HISTORY_CACHE_VERSION = 7;
 
 export function normalizeProblemText(text) {
   return String(text ?? "").trim().replace(/\s+/g, " ");
@@ -38,7 +38,8 @@ function isCurrentCacheKey(cacheKey) {
   }
 }
 
-export function findHistoryCacheHit(history, cacheKey, { text, hasImage }) {
+export function findHistoryCacheHit(history, cacheKey, { text, hasImage, forceReparse = false }) {
+  if (forceReparse) return null;
   if (!cacheKey) return null;
 
   const keyedMatch = history.find((item) => item.cacheKey === cacheKey && isCurrentCacheKey(item.cacheKey));

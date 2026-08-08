@@ -33,7 +33,15 @@ import {
   ZoomIn,
   ZoomOut
 } from "lucide-react";
-import { executeGgbCommand, get3DCoordinateSystem, getExplicitlyHiddenObjectLabels } from "./ggbExecutor.js";
+import {
+  apply3DCanvasPresentation,
+  executeGgbCommand,
+  getAngleDependencyLabels,
+  get3DAutoZoomFactor,
+  get3DCoordinateSystem,
+  getExplicitlyHiddenObjectLabels,
+  isInfinite3DPlane
+} from "./ggbExecutor.js";
 import { downloadGgbConstruction, downloadGgbWebPage } from "./ggbDownload.js";
 import { getDynamicDemoState } from "./dynamicDemoState.js";
 import {
@@ -42,14 +50,18 @@ import {
   getSweepValue
 } from "./dynamicDemoTimeline.js";
 import { getRenderLogState } from "./renderLogState.js";
+import {
+  applySpatialPointControl,
+  getSpatialPointControlValues,
+  projectPointToLineDistance
+} from "./geometryInteraction.js";
 import { assessRenderQuality } from "./renderQuality.js";
+import { validateDynamicInvariants } from "./dynamicInvariantValidator.js";
 import { createHistoryCacheKey, findHistoryCacheHit, readHistoryItems } from "./historyCache.js";
 import { mergeDynamicControls } from "../shared/dynamicControls.js";
-import { enhanceSolidGeometryCommands } from "../shared/solidGeometryEnhancer.js";
 import { normalizeStyleCommandTargets } from "../shared/styleTargetNormalizer.js";
 import {
   AREA_FILLING,
-  enhanceTeachingDiagramCommands,
   getHighlightedAreaPolygonLabels
 } from "../shared/teachingDiagramEnhancer.js";
 import { findProviderByBaseUrl, providerPresets } from "../shared/providerPresets.js";
@@ -63,6 +75,8 @@ import {
 } from "../shared/solveResultV2.js";
 import { loadGeoGebra } from "./ggbLoader.js";
 import { createDiagnosticReport, recordDiagnostic } from "./diagnostics.js";
+import { requestJson } from "./apiClient.js";
+import { requestProblemSolution } from "./problemSolver.js";
 import {
   createProjectBackup,
   deleteProject,
@@ -175,6 +189,8 @@ function formatDynamicControlLabel(control) {
   if (movingPoint) return `动点${movingPoint[1]}`;
   if (/斜率|slope/i.test(description)) return "斜率";
   if (/截距|intercept/i.test(description)) return "截距";
+  if (/点\s*[A-Za-z][A-Za-z0-9_]*.*旋转/.test(description)) return description;
+  if (/联动旋转/.test(description)) return description;
   if (/角|旋转|angle/i.test(description)) return "角度";
   return description || control.name;
 }
@@ -460,6 +476,8 @@ function GeoGebraCanvas({
   const semanticReviewSignaturesRef = useRef(new Set());
   const objectCommandIndexRef = useRef(new Map());
   const clickListenerNameRef = useRef(`__ggbAiObjectClick_${Math.random().toString(36).slice(2)}`);
+  const constraintListenerNamesRef = useRef(new Map());
+  const constraintProjectionRef = useRef(new Set());
   const highlightedObjectRef = useRef("");
   const userSelectedViewRef = useRef(false);
   const currentRenderSignature = getRenderSignature(result, viewMode);
@@ -480,6 +498,119 @@ function GeoGebraCanvas({
     1,
     ...(result?.constructionSteps || []).map((step, index) => Number(step?.stage) || index + 1)
   );
+
+  function clearRuntimeConstraintListeners(api = appletRef.current) {
+    for (const [objectLabel, listenerName] of constraintListenerNamesRef.current) {
+      try {
+        api?.unregisterObjectUpdateListener?.(objectLabel);
+      } catch {
+        // The object may already have been removed by newConstruction.
+      }
+      try {
+        delete window[listenerName];
+      } catch {
+        window[listenerName] = undefined;
+      }
+    }
+    constraintListenerNamesRef.current.clear();
+    constraintProjectionRef.current.clear();
+  }
+
+  function registerRuntimeDistanceConstraints(api) {
+    clearRuntimeConstraintListeners(api);
+    const constraints = (result?.problemContract?.constraints || []).filter((constraint) => (
+      constraint?.type === "distance_to_line"
+      && Array.isArray(constraint.objects)
+      && constraint.objects.length >= 3
+    ));
+
+    const readPoint = (label) => {
+      const coordinates = [
+        Number(api.getXcoord?.(label)),
+        Number(api.getYcoord?.(label)),
+        Number(api.getZcoord?.(label))
+      ];
+      return coordinates.every(Number.isFinite) ? coordinates : null;
+    };
+
+    for (const constraint of constraints) {
+      const [pointLabel, lineStartLabel, lineEndLabel] = constraint.objects;
+      if (typeof api.isIndependent === "function" && !api.isIndependent(pointLabel)) continue;
+      const listenerName = `__ggbAiConstraint_${pointLabel}_${Math.random().toString(36).slice(2)}`;
+      window[listenerName] = () => {
+        if (constraintProjectionRef.current.has(pointLabel)) return;
+        const point = readPoint(pointLabel);
+        const lineStart = readPoint(lineStartLabel);
+        const lineEnd = readPoint(lineEndLabel);
+        const projected = projectPointToLineDistance({
+          point,
+          lineStart,
+          lineEnd,
+          distance: constraint.value
+        });
+        if (!projected) return;
+        const displacement = Math.hypot(...projected.map((value, index) => value - point[index]));
+        if (displacement >= 1e-7) {
+          constraintProjectionRef.current.add(pointLabel);
+          try {
+            api.setCoords?.(pointLabel, ...projected);
+          } finally {
+            constraintProjectionRef.current.delete(pointLabel);
+          }
+        }
+        const controlValues = getSpatialPointControlValues({ point: projected, lineStart, lineEnd });
+        if (controlValues) {
+          setDynamicValues((current) => ({
+            ...current,
+            [`${pointLabel}_axial`]: controlValues.axial,
+            [`${pointLabel}_rotation`]: controlValues.rotation
+          }));
+        }
+      };
+      try {
+        api.registerObjectUpdateListener?.(pointLabel, listenerName);
+        constraintListenerNamesRef.current.set(pointLabel, listenerName);
+      } catch {
+        delete window[listenerName];
+      }
+    }
+  }
+
+  function applyRuntimeDynamicControl(api, control, value) {
+    const match = String(control?.name || "").match(/^([A-Z][A-Za-z0-9_]*)_(axial|rotation)$/);
+    if (!match) return false;
+
+    const [, pointLabel, kind] = match;
+    const constraint = (result?.problemContract?.constraints || []).find((item) => (
+      item?.type === "distance_to_line"
+      && item.objects?.[0] === pointLabel
+      && item.objects.length >= 3
+    ));
+    if (!constraint) return false;
+
+    const readPoint = (label) => {
+      const coordinates = [
+        Number(api.getXcoord?.(label)),
+        Number(api.getYcoord?.(label)),
+        Number(api.getZcoord?.(label))
+      ];
+      return coordinates.every(Number.isFinite) ? coordinates : null;
+    };
+    const point = readPoint(pointLabel);
+    const lineStart = readPoint(constraint.objects[1]);
+    const lineEnd = readPoint(constraint.objects[2]);
+    const nextPoint = applySpatialPointControl({
+      point,
+      lineStart,
+      lineEnd,
+      distance: constraint.value,
+      kind,
+      value
+    });
+    if (!nextPoint) return false;
+    api.setCoords?.(pointLabel, ...nextPoint);
+    return true;
+  }
 
   useEffect(() => {
     demoRunRef.current += 1;
@@ -608,7 +739,7 @@ function GeoGebraCanvas({
           try {
             resizeApplet();
             if (viewMode === "3d") {
-              api.setAxesVisible?.(3, true, true, true);
+              apply3DCanvasPresentation(api, { editorMode: isEditorMode });
             } else {
               api.setAxesVisible(true, true);
               api.setCoordSystem(-8, 8, -6, 6);
@@ -640,6 +771,7 @@ function GeoGebraCanvas({
       });
     return () => {
       cancelled = true;
+      clearRuntimeConstraintListeners(appletRef.current);
       appletRef.current = null;
       try {
         delete window[clickListenerNameRef.current];
@@ -680,9 +812,13 @@ function GeoGebraCanvas({
     let objectNames = [];
     let repaintingPaused = false;
     let areaHighlightLabels = [];
+    let constructionCommitted = false;
+    let previousConstructionXml = "";
     const dynamicControls = result.dynamicControls || [];
 
     try {
+      clearRuntimeConstraintListeners(api);
+      previousConstructionXml = api.getXML?.() || "";
       api.setRepaintingActive(false);
       repaintingPaused = true;
       api.setErrorDialogsActive(false);
@@ -693,13 +829,12 @@ function GeoGebraCanvas({
       if (viewMode === "3d") {
         if (!isEditorMode) api.setPerspective?.("T");
         try {
-          api.setCoordSystem(...get3DCoordinateSystem(result.viewport));
+          api.setCoordSystem(...get3DCoordinateSystem(result.viewport, result.ggbCommands));
         } catch {
           // Continue with GeoGebra's default 3D view when a build does not expose the 3D overload.
         }
         try {
-          api.setAxesVisible?.(3, true, true, true);
-          api.setGridVisible?.(3, true);
+          apply3DCanvasPresentation(api, { editorMode: isEditorMode });
         } catch {
           // Axis and grid styling must not prevent the construction from rendering.
         }
@@ -712,14 +847,9 @@ function GeoGebraCanvas({
         );
       }
 
-      const commandsToRender = enhanceTeachingDiagramCommands({
-        mathType: result.mathType,
-        commands: enhanceSolidGeometryCommands({
-          mathType: result.mathType,
-          commands: result.ggbCommands
-        })
-      });
+      const commandsToRender = result.ggbCommands;
       const hiddenObjectLabels = getExplicitlyHiddenObjectLabels(commandsToRender);
+      const angleDependencyLabels = getAngleDependencyLabels(commandsToRender);
       objectCommandIndexRef.current = buildObjectCommandIndex(commandsToRender);
       areaHighlightLabels = getHighlightedAreaPolygonLabels({ mathType: result.mathType, commands: commandsToRender });
       for (const command of commandsToRender) {
@@ -735,6 +865,7 @@ function GeoGebraCanvas({
       const inspectableObjects = objectNames
         .filter((name) => !dynamicControls.some((control) => control.name === name))
         .filter((name) => knownObjectLabels.has(name))
+        .filter((name) => manifestByLabel.get(name)?.role !== "hidden")
         .filter((name) => getObjectGeometryCategory(
           api,
           name,
@@ -742,15 +873,30 @@ function GeoGebraCanvas({
           manifestByLabel.get(name)
         ))
         .slice(0, 200);
-      setCanvasObjects(inspectableObjects);
-      setSelectedObject((current) => {
-        const nextSelected = current && inspectableObjects.includes(current) ? current : inspectableObjects[0] || "";
-        if (nextSelected) window.setTimeout(() => selectCanvasObject(nextSelected, { announce: false }), 0);
-        return nextSelected;
-      });
       for (const objectName of objectNames) {
-        if (hiddenObjectLabels.has(objectName)) continue;
-        api.setVisible?.(objectName, true);
+        const objectType = String(api.getObjectType?.(objectName) || "").toLowerCase();
+        if (viewMode === "3d" && isInfinite3DPlane(api, objectName)) {
+          api.setFilling?.(objectName, 0.045);
+          api.setColor?.(objectName, 148, 163, 184);
+          api.setLabelVisible?.(objectName, false);
+        }
+        if (viewMode === "3d" && objectType.includes("angle")) {
+          api.setLabelVisible?.(objectName, false);
+        }
+        const supportsAngle = viewMode === "3d"
+          && isInfinite3DPlane(api, objectName)
+          && angleDependencyLabels.has(objectName);
+        api.setVisible?.(objectName, !hiddenObjectLabels.has(objectName) || supportsAngle);
+      }
+      if (viewMode === "3d") {
+        try {
+          api.setCoordSystem(...get3DCoordinateSystem(result.viewport, result.ggbCommands));
+          apply3DCanvasPresentation(api, { editorMode: isEditorMode });
+          const zoomFactor = get3DAutoZoomFactor(result.ggbCommands);
+          if (zoomFactor > 1) api.evalCommand?.(`ZoomIn(${zoomFactor})`);
+        } catch {
+          // Keep the constructed objects even if this applet build cannot reset the 3D camera.
+        }
       }
       applyDynamicVisualFixes(api, { areaLabels: areaHighlightLabels, dynamicControls });
       for (const pointLabel of getFreePointLabels(commandsToRender)) {
@@ -760,11 +906,14 @@ function GeoGebraCanvas({
           // Some GeoGebra builds reject fixed-state changes for dependent objects.
         }
       }
+      registerRuntimeDistanceConstraints(api);
       api.setMode?.(0);
       for (const control of dynamicControls) {
         const value = getInitialDynamicControlValue(control);
         try {
-          api.setValue?.(control.name, value);
+          if (!applyRuntimeDynamicControl(api, control, value)) {
+            api.setValue?.(control.name, value);
+          }
         } catch {
           // Keep the construction usable even if a generated slider name is missing.
         }
@@ -777,7 +926,7 @@ function GeoGebraCanvas({
         objectNames
       });
       const objectStates = collectRuntimeObjectStates(api, result.objectManifest);
-      const semanticReport = validateSemanticContract({
+      const initialSemanticReport = validateSemanticContract({
         contract: result.problemContract,
         originalContract: result.problemContract,
         mathType: result.mathType,
@@ -785,6 +934,21 @@ function GeoGebraCanvas({
         objectManifest: result.objectManifest,
         objectStates
       });
+      const dynamicSemanticReport = initialSemanticReport.ok
+        ? validateDynamicInvariants({
+          api,
+          controls: dynamicControls,
+          validateCurrentState: () => validateSemanticContract({
+            contract: result.problemContract,
+            originalContract: result.problemContract,
+            mathType: result.mathType,
+            commands: commandsToRender,
+            objectManifest: result.objectManifest,
+            objectStates: collectRuntimeObjectStates(api, result.objectManifest)
+          })
+        })
+        : initialSemanticReport;
+      const semanticReport = dynamicSemanticReport.ok ? initialSemanticReport : dynamicSemanticReport;
       const combinedQualityReport = semanticReport.ok
         ? qualityReport
         : {
@@ -795,11 +959,15 @@ function GeoGebraCanvas({
           issues: [...(qualityReport.issues || []), ...semanticReport.issues.map((issue) => issue.message)]
         };
       const hasRenderedObject = Boolean(objectNames.length || nextCommandResults.some((item) => item.ok));
-      setCommandResults(nextCommandResults);
       setRenderQuality(combinedQualityReport);
-      setLastRenderedSignature(hasRenderedObject ? currentRenderSignature : "");
-      setStatus(hasRenderedObject ? "已绘制" : "正在检查绘图结果");
       if (!combinedQualityReport.ok || !hasRenderedObject) {
+        if (previousConstructionXml) api.setXML?.(previousConstructionXml);
+        else api.newConstruction();
+        setCommandResults([]);
+        setCanvasObjects([]);
+        setSelectedObject("");
+        setLastRenderedSignature("");
+        setStatus("正在自动修复图形...");
         void requestCommandRepair({
           qualityReport: hasRenderedObject
             ? combinedQualityReport
@@ -807,7 +975,19 @@ function GeoGebraCanvas({
           commandResults: nextCommandResults,
           objectNames
         });
-      } else if (semanticReport.requiresSemanticReview && typeof onSemanticReview === "function") {
+      } else {
+        constructionCommitted = true;
+        setCommandResults(nextCommandResults);
+        setCanvasObjects(inspectableObjects);
+        setSelectedObject((current) => {
+          const nextSelected = current && inspectableObjects.includes(current) ? current : inspectableObjects[0] || "";
+          if (nextSelected) window.setTimeout(() => selectCanvasObject(nextSelected, { announce: false }), 0);
+          return nextSelected;
+        });
+        setLastRenderedSignature(currentRenderSignature);
+        setStatus("已绘制");
+      }
+      if (constructionCommitted && semanticReport.requiresSemanticReview && typeof onSemanticReview === "function") {
         const reviewSignature = getRenderSignature(result, viewMode);
         if (!semanticReviewSignaturesRef.current.has(reviewSignature)) {
           semanticReviewSignaturesRef.current.add(reviewSignature);
@@ -838,8 +1018,14 @@ function GeoGebraCanvas({
         }
       }
     } catch (error) {
-      setStatus(error.message || "GeoGebra 绘制失败");
-      setCommandResults(nextCommandResults);
+      try {
+        if (previousConstructionXml) api.setXML?.(previousConstructionXml);
+        else api.newConstruction();
+      } catch {
+        // Keep the canvas blank rather than exposing a partially executed construction.
+      }
+      setStatus("正在自动修复图形...");
+      setCommandResults([]);
       setRenderQuality(null);
       setCanvasObjects([]);
       setSelectedObject("");
@@ -847,10 +1033,10 @@ function GeoGebraCanvas({
     } finally {
       try {
         if (repaintingPaused) api.setRepaintingActive(true);
-        applyDynamicVisualFixes(api, { areaLabels: areaHighlightLabels, dynamicControls });
+        if (constructionCommitted) applyDynamicVisualFixes(api, { areaLabels: areaHighlightLabels, dynamicControls });
         api.refreshViews();
         window.setTimeout(() => {
-          applyDynamicVisualFixes(api, { areaLabels: areaHighlightLabels, dynamicControls });
+          if (constructionCommitted) applyDynamicVisualFixes(api, { areaLabels: areaHighlightLabels, dynamicControls });
           api.refreshViews?.();
         }, 120);
       } catch {
@@ -905,8 +1091,8 @@ function GeoGebraCanvas({
     appletRef.current.newConstruction();
     if (viewMode === "3d") {
       try {
-        appletRef.current.setCoordSystem(...get3DCoordinateSystem(result?.viewport));
-        appletRef.current.setAxesVisible?.(3, true, true, true);
+        appletRef.current.setCoordSystem(...get3DCoordinateSystem(result?.viewport, result?.ggbCommands));
+        apply3DCanvasPresentation(appletRef.current, { editorMode: isEditorMode });
       } catch {
         // Keep the default 3D camera when this applet build lacks the overload.
       }
@@ -945,8 +1131,11 @@ function GeoGebraCanvas({
     setDynamicValues((current) => ({ ...current, [control.name]: value }));
 
     try {
-      appletRef.current?.setValue?.(control.name, value);
-      appletRef.current?.refreshViews?.();
+      const api = appletRef.current;
+      if (!applyRuntimeDynamicControl(api, control, value)) {
+        api?.setValue?.(control.name, value);
+      }
+      api?.refreshViews?.();
       setStatus(`已更新参数 ${control.name}=${value}`);
     } catch {
       setStatus(`参数 ${control.name} 暂不可用，请先绘制图像`);
@@ -1043,7 +1232,9 @@ function GeoGebraCanvas({
       const value = getInitialDynamicControlValue(control);
       nextValues[control.name] = value;
       try {
-        appletRef.current?.setValue?.(control.name, value);
+        if (!applyRuntimeDynamicControl(appletRef.current, control, value)) {
+          appletRef.current?.setValue?.(control.name, value);
+        }
       } catch {
         // A missing generated slider should not block resetting the rest.
       }
@@ -1096,7 +1287,10 @@ function GeoGebraCanvas({
     setDynamicValues((current) => ({ ...current, ...values }));
     for (const [name, value] of Object.entries(values)) {
       try {
-        api?.setValue?.(name, value);
+        const control = (result?.dynamicControls || []).find((item) => item.name === name) || { name };
+        if (!applyRuntimeDynamicControl(api, control, value)) {
+          api?.setValue?.(name, value);
+        }
       } catch {
         // Continue updating other generated controls when one slider is missing.
       }
@@ -1418,7 +1612,7 @@ function GeoGebraCanvas({
               <label className="canvas-dynamic-control" key={`${control.name}-${control.min}-${control.max}`}>
                 <span className="canvas-dynamic-label">
                   <span className="canvas-dynamic-name">{label}</span>
-                  <strong>{control.name}</strong>
+                  {!/_(?:axial|rotation)$/i.test(control.name) ? <strong>{control.name}</strong> : null}
                 </span>
                 <input
                   type="range"
@@ -1630,7 +1824,7 @@ function ApiKeySettings() {
     }
     setIsTestingConnection(true);
     try {
-      const response = await fetch("/api/provider/test", {
+      const payload = await requestJson("/api/provider/test", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1639,9 +1833,7 @@ function ApiKeySettings() {
           ...(draftSettings.model.trim() ? { "X-OpenAI-Model": draftSettings.model.trim() } : {})
         },
         body: JSON.stringify({})
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "连接测试失败。");
+      }, "连接测试失败，请检查 API 配置。");
       setDraftSettings((current) => ({ ...current, supportsVision: payload.supportsVision ?? current.supportsVision }));
       setConnectionStatus(`连接成功：${payload.model || "默认模型"}`);
     } catch (error) {
@@ -1848,12 +2040,9 @@ function InputPanel({ onSolved, onReuseHistory, history, activeText, setActiveTe
   const [image, setImage] = useState(null);
   const [imagePreview, setImagePreview] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isRecognizing, setIsRecognizing] = useState(false);
-  const [ocrConfirmed, setOcrConfirmed] = useState(true);
-  const [ocrUncertainties, setOcrUncertainties] = useState([]);
+  const [submissionStage, setSubmissionStage] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const forceReparseRef = useRef(false);
 
   useEffect(() => {
     return () => {
@@ -1875,8 +2064,7 @@ function InputPanel({ onSolved, onReuseHistory, history, activeText, setActiveTe
     }
     setImage(file);
     setImagePreview(URL.createObjectURL(file));
-    setOcrConfirmed(false);
-    setOcrUncertainties([]);
+    setNotice("题图已添加，提交后将直接识别并生成绘图方案。");
   }
 
   function handleTextPaste(event) {
@@ -1892,36 +2080,6 @@ function InputPanel({ onSolved, onReuseHistory, history, activeText, setActiveTe
   function clearImage() {
     setImage(null);
     setImagePreview("");
-    setOcrConfirmed(true);
-    setOcrUncertainties([]);
-  }
-
-  async function recognizeImage() {
-    if (!image) return;
-    setError("");
-    setNotice("");
-    setIsRecognizing(true);
-    try {
-      const form = new FormData();
-      form.append("image", image);
-      form.append("text", activeText);
-      const apiSettings = readApiSettings();
-      const headers = {};
-      if (apiSettings.apiKey) headers["X-OpenAI-API-Key"] = apiSettings.apiKey;
-      if (apiSettings.baseUrl) headers["X-OpenAI-Base-URL"] = apiSettings.baseUrl;
-      if (apiSettings.model) headers["X-OpenAI-Model"] = apiSettings.model;
-      const response = await fetch("/api/recognize", { method: "POST", body: form, headers });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "题目图片识别失败。");
-      if (payload.recognizedText) setActiveText(payload.recognizedText);
-      setOcrUncertainties(Array.isArray(payload.uncertainties) ? payload.uncertainties : []);
-      setNotice("请校对识别文字，确认后再生成绘图方案。");
-      recordDiagnostic({ traceId: payload.traceId, stage: "recognize", status: "success" });
-    } catch (recognizeError) {
-      setError(recognizeError.message || "题目图片识别失败。");
-    } finally {
-      setIsRecognizing(false);
-    }
   }
 
   function getVisionModelError() {
@@ -1934,6 +2092,7 @@ function InputPanel({ onSolved, onReuseHistory, history, activeText, setActiveTe
 
   async function submitProblem(event) {
     event.preventDefault();
+    const forceReparse = event.nativeEvent?.submitter?.value === "reparse";
     setError("");
     setNotice("");
 
@@ -1941,11 +2100,6 @@ function InputPanel({ onSolved, onReuseHistory, history, activeText, setActiveTe
       setError("请输入题目文字或上传题目图片。");
       return;
     }
-    if (image && !ocrConfirmed) {
-      setError("请先识别并确认题目文字，再生成绘图方案。");
-      return;
-    }
-
     const visionModelError = getVisionModelError();
     if (visionModelError) {
       setError(visionModelError);
@@ -1967,29 +2121,30 @@ function InputPanel({ onSolved, onReuseHistory, history, activeText, setActiveTe
         provider: selectedProvider,
         model: apiSettings.model
       });
-      const cachedItem = forceReparseRef.current
-        ? null
-        : findHistoryCacheHit(history, cacheKey, { text: activeText, hasImage: Boolean(image) });
+      const cachedItem = findHistoryCacheHit(history, cacheKey, {
+        text: activeText,
+        hasImage: Boolean(image),
+        forceReparse
+      });
       if (cachedItem) {
         onReuseHistory(cachedItem);
         setNotice("已读取本地历史解析结果，未重复调用模型。");
         return;
       }
 
-      const form = new FormData();
-      form.append("text", activeText);
-      if (image) form.append("image", image);
       const headers = {};
       if (apiSettings.apiKey) headers["X-OpenAI-API-Key"] = apiSettings.apiKey;
       if (apiSettings.baseUrl) headers["X-OpenAI-Base-URL"] = apiSettings.baseUrl;
       if (apiSettings.model) headers["X-OpenAI-Model"] = apiSettings.model;
-      const response = await fetch("/api/solve", { method: "POST", body: form, headers });
-      const payload = await response.json();
-      if (!response.ok) {
-        throw new Error(payload.error || "解析请求失败。");
-      }
+      const { payload, recognizedText } = await requestProblemSolution({
+        text: activeText,
+        image,
+        headers,
+        onStage: setSubmissionStage
+      });
+      if (image && recognizedText) setActiveText(recognizedText);
       onSolved(payload, {
-        promptText: activeText,
+        promptText: recognizedText || activeText,
         imageName: image?.name || null,
         imagePreview,
         imageFingerprint,
@@ -2005,7 +2160,7 @@ function InputPanel({ onSolved, onReuseHistory, history, activeText, setActiveTe
     } catch (requestError) {
       setError(requestError.message);
     } finally {
-      forceReparseRef.current = false;
+      setSubmissionStage("");
       setIsSubmitting(false);
     }
   }
@@ -2067,47 +2222,6 @@ function InputPanel({ onSolved, onReuseHistory, history, activeText, setActiveTe
             </button>
           </div>
         ) : null}
-        {image && !ocrConfirmed ? (
-          <div className="ocr-review">
-            <div>
-              <strong>题图文字校对</strong>
-              <p>{isRecognizing ? "正在识别题目..." : "识别后请检查公式、上下标和点名。"}</p>
-            </div>
-            <div className="ocr-actions">
-              <button className="secondary-button" type="button" onClick={recognizeImage} disabled={isRecognizing}>
-                {isRecognizing ? <Loader2 className="spin" size={15} /> : <FileImage size={15} />}
-                {isRecognizing ? "正在识别" : "识别题目"}
-              </button>
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={() => {
-                  if (!activeText.trim()) {
-                    setError("识别文字不能为空。");
-                    return;
-                  }
-                  setOcrConfirmed(true);
-                  setNotice("题目文字已确认，可以生成绘图方案。");
-                }}
-                disabled={!activeText.trim() || isRecognizing}
-              >
-                <CheckCircle2 size={15} />
-                确认识别文字
-              </button>
-            </div>
-            {ocrUncertainties.length ? (
-              <ul className="ocr-uncertainties">
-                {ocrUncertainties.map((item, index) => (
-                  <li key={`${item.text}-${index}`}>
-                    <strong>{item.text || "疑似内容"}</strong>
-                    <span>{item.reason}{item.suggestion ? `；建议：${item.suggestion}` : ""}</span>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
-        ) : null}
-
         {error ? (
           <div className="error-box">
             <AlertTriangle size={16} />
@@ -2118,11 +2232,13 @@ function InputPanel({ onSolved, onReuseHistory, history, activeText, setActiveTe
         {notice ? <div className="success-box"><CheckCircle2 size={16} /><span>{notice}</span></div> : null}
 
         <div className="solve-actions">
-          <button className="primary-button" type="submit" disabled={isSubmitting} onClick={() => { forceReparseRef.current = false; }}>
+          <button className="primary-button" type="submit" name="solve-mode" value="history" disabled={isSubmitting}>
             {isSubmitting ? <Loader2 className="spin" size={18} /> : <ChevronRight size={18} />}
-            {isSubmitting ? "正在理解题目" : "使用历史结果或解析"}
+            {isSubmitting
+              ? submissionStage === "recognizing" ? "正在识别题图" : "正在生成绘图方案"
+              : "使用历史结果或解析"}
           </button>
-          <button className="secondary-button" type="submit" disabled={isSubmitting} onClick={() => { forceReparseRef.current = true; }}>
+          <button className="secondary-button" type="submit" name="solve-mode" value="reparse" disabled={isSubmitting}>
             <RefreshCw size={16} />
             重新解析
           </button>
@@ -2616,7 +2732,7 @@ function App() {
     if (apiSettings.baseUrl) headers["X-OpenAI-Base-URL"] = apiSettings.baseUrl;
     if (apiSettings.model) headers["X-OpenAI-Model"] = apiSettings.model;
 
-    const response = await fetch("/api/commands", {
+    const payload = await requestJson("/api/commands", {
       method: "POST",
       headers,
       body: JSON.stringify({
@@ -2626,11 +2742,7 @@ function App() {
         viewport: latestResult.viewport,
         constructionSteps
       })
-    });
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload.error || "重新生成命令失败。");
-    }
+    }, "重新生成命令失败，请稍后重试。");
 
     setResult((current) => current ? {
       ...current,
@@ -2651,7 +2763,7 @@ function App() {
     if (apiSettings.baseUrl) headers["X-OpenAI-Base-URL"] = apiSettings.baseUrl;
     if (apiSettings.model) headers["X-OpenAI-Model"] = apiSettings.model;
 
-    const response = await fetch("/api/repair", {
+    const payload = await requestJson("/api/repair", {
       method: "POST",
       headers,
       body: JSON.stringify({
@@ -2664,11 +2776,7 @@ function App() {
           viewMode: repairContext?.viewMode || ""
         }
       })
-    });
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload.error || "自动修复命令失败。");
-    }
+    }, "自动修复命令失败，请稍后重试。");
 
     setResult((current) => current ? {
       ...current,
@@ -2686,14 +2794,11 @@ function App() {
     if (apiSettings.apiKey) headers["X-OpenAI-API-Key"] = apiSettings.apiKey;
     if (apiSettings.baseUrl) headers["X-OpenAI-Base-URL"] = apiSettings.baseUrl;
     if (apiSettings.model) headers["X-OpenAI-Model"] = apiSettings.model;
-    const response = await fetch("/api/semantic-review", {
+    return requestJson("/api/semantic-review", {
       method: "POST",
       headers,
       body: JSON.stringify(reviewPayload)
-    });
-    const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error || "复杂图形复核失败。");
-    return payload;
+    }, "复杂图形复核失败，请稍后重试。");
   }
 
   function updateTeachingNotes(teachingNotes) {

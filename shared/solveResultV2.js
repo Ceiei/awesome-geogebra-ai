@@ -1,14 +1,76 @@
 import { parseGgbCommand } from "./ggbCommandParser.js";
 
 export const SOLVE_SCHEMA_VERSION = 2;
-export const PROMPT_VERSION = "2026-07-23-teacher-v4";
-export const TEMPLATE_VERSION = "2026-07-23-parameterized-v4";
-export const VALIDATOR_VERSION = "2026-07-23-semantic-v3";
+export const PROMPT_VERSION = "2026-08-08-staged-vision-v6";
+export const TEMPLATE_VERSION = "2026-08-08-parameterized-v6";
+export const VALIDATOR_VERSION = "2026-08-08-visual-v4";
 
 const MATH_TYPES = new Set(["geometry", "function", "analytic_geometry", "solid_geometry"]);
 
+function toArray(value) {
+  if (Array.isArray(value)) return value;
+  if (value === null || value === undefined || value === "") return [];
+  if (typeof value === "object") return Object.values(value);
+  return [value];
+}
+
+export function unwrapSolveResult(value) {
+  let current = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  for (let depth = 0; depth < 2; depth += 1) {
+    if (current.ggbCommands !== undefined || current.constructionSteps !== undefined || current.problemSummary !== undefined) {
+      break;
+    }
+    const nested = ["result", "data", "output", "answer"]
+      .map((key) => current[key])
+      .find((candidate) => candidate && typeof candidate === "object" && !Array.isArray(candidate));
+    if (!nested) break;
+    current = nested;
+  }
+  return current;
+}
+
+export function normalizeCommandList(value) {
+  let source = value;
+  if (typeof source === "string") {
+    const trimmed = source.trim();
+    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      try {
+        source = JSON.parse(trimmed);
+      } catch {
+        source = trimmed;
+      }
+    }
+  }
+  if (source && typeof source === "object" && !Array.isArray(source)) {
+    source = source.commands || source.items || source.ggbCommands || Object.values(source);
+  }
+
+  return toArray(source).flatMap((command) => String(command ?? "")
+    .replace(/^```(?:geogebra|ggb)?\s*/i, "")
+    .replace(/```$/i, "")
+    .split(/\r?\n/))
+    .map((command) => command.trim().replace(/^\s*(?:[-*]|\d+[.)])\s+/, ""))
+    .filter(Boolean);
+}
+
 function uniqueStrings(values) {
-  return [...new Set((values || []).map((value) => String(value ?? "").trim()).filter(Boolean))];
+  return [...new Set(toArray(values).map((value) => String(value ?? "").trim()).filter(Boolean))];
+}
+
+function normalizeProvidedManifest(provided) {
+  if (Array.isArray(provided)) return provided;
+  if (!provided || typeof provided !== "object") return [];
+
+  for (const key of ["objects", "items", "manifest", "objectManifest"]) {
+    if (Array.isArray(provided[key])) return provided[key];
+  }
+
+  return Object.entries(provided).map(([label, item]) => {
+    if (item && typeof item === "object" && !Array.isArray(item)) {
+      return { ...item, label: String(item.label || label) };
+    }
+    return { label, teacherName: typeof item === "string" ? item : "" };
+  });
 }
 
 function normalizeRole(role) {
@@ -45,13 +107,19 @@ function inferObjectRole(entry) {
   if (entry.commandName === "Polygon") return "region";
   if (["Area", "Distance", "Angle"].includes(entry.commandName)) return "measurement";
   if (/helper|height|foot|projection|aux|directrix|vertical/i.test(entry.label)) return "helper";
-  if (/plane/i.test(entry.label)) return "hidden";
+  if (entry.commandName === "Plane") {
+    return /(?:calc|hidden|compute)/i.test(entry.label) ? "hidden" : "helper";
+  }
   if ((entry.kind !== "point" && POINT_COMMANDS.has(entry.commandName)) || ["Tangent", "AngleBisector"].includes(entry.commandName)) return "key";
   return "original";
 }
 
 export function buildObjectManifest(commands, provided = []) {
-  const providedByLabel = new Map((provided || []).map((item) => [String(item?.label || ""), item]));
+  const providedByLabel = new Map(
+    normalizeProvidedManifest(provided)
+      .filter((item) => item && typeof item === "object" && item.label)
+      .map((item) => [String(item.label), item])
+  );
   const manifest = [];
   for (const command of commands || []) {
     const parsed = parseGgbCommand(command);
@@ -74,7 +142,7 @@ export function buildObjectManifest(commands, provided = []) {
 
 function normalizeSteps(steps, manifest) {
   const labels = manifest.map((item) => item.label);
-  return (Array.isArray(steps) ? steps : []).map((step, index) => {
+  return toArray(steps).map((step, index) => {
     if (typeof step === "string") {
       return {
         id: `step-${index + 1}`,
@@ -121,14 +189,14 @@ export function buildProblemContract({ text, mathType, commands, rawContract = {
     fixedExpressions: uniqueStrings(rawContract.fixedExpressions?.length ? rawContract.fixedExpressions : extractEquationCandidates(sourceText)),
     requiredLabels: uniqueStrings(rawContract.requiredLabels?.length ? rawContract.requiredLabels : inferRequiredLabels(sourceText, commands)),
     requiredObjects: uniqueStrings(rawContract.requiredObjects),
-    constraints: Array.isArray(rawContract.constraints) ? rawContract.constraints.map((item, index) => ({
+    constraints: toArray(rawContract.constraints).filter((item) => item && typeof item === "object").map((item, index) => ({
       id: String(item?.id || `constraint-${index + 1}`),
       type: String(item?.type || "described"),
       objects: uniqueStrings(item?.objects),
       value: item?.value ?? null,
       expression: String(item?.expression || ""),
       description: String(item?.description || "")
-    })) : [],
+    })),
     targets: uniqueStrings(rawContract.targets),
     locked: true
   };
@@ -153,9 +221,9 @@ function normalizeDynamicControl(control) {
 }
 
 export function normalizeSolveResultV2(raw, { sourceText = "", model = "", provider = "", fromCache = false } = {}) {
-  const result = raw && typeof raw === "object" ? raw : {};
+  const result = unwrapSolveResult(raw);
   const mathType = MATH_TYPES.has(result.mathType) ? result.mathType : "geometry";
-  const commands = Array.isArray(result.ggbCommands) ? result.ggbCommands.map(String).map((item) => item.trim()).filter(Boolean) : [];
+  const commands = normalizeCommandList(result.ggbCommands);
   let objectManifest = buildObjectManifest(commands, result.objectManifest);
   const constructionSteps = normalizeSteps(result.constructionSteps, objectManifest);
   const stepByLabel = new Map();
@@ -176,19 +244,19 @@ export function normalizeSolveResultV2(raw, { sourceText = "", model = "", provi
     commands,
     rawContract: result.problemContract
   });
-  const controls = (Array.isArray(result.dynamicControls) ? result.dynamicControls : [])
+  const controls = toArray(result.dynamicControls)
     .map(normalizeDynamicControl)
     .filter((item) => item.name)
     .map(({ name, description, min, max, step }) => ({ name, description, min, max, step }));
-  const hasExplicitCandidates = Array.isArray(result.dynamicCandidates);
+  const hasExplicitCandidates = result.dynamicCandidates !== null && result.dynamicCandidates !== undefined;
   const candidatesSource = hasExplicitCandidates
-    ? result.dynamicCandidates
+    ? toArray(result.dynamicCandidates)
     : controls.map((control) => ({ ...control, enabled: true }));
   const dynamicCandidates = candidatesSource.map((item) => ({
     ...normalizeDynamicControl(item),
     enabled: true,
     reason: String(item?.reason || item?.description || "")
-  })).filter((item) => item.name).slice(0, 2);
+  })).filter((item) => item.name);
   const dynamicControls = [...new Map([
     ...controls,
     ...dynamicCandidates.map((candidate) => ({
@@ -213,7 +281,7 @@ export function normalizeSolveResultV2(raw, { sourceText = "", model = "", provi
     dynamicControls,
     teachingNotes: {
       conclusion: String(result.teachingNotes?.conclusion || ""),
-      keyReasons: (Array.isArray(result.teachingNotes?.keyReasons) ? result.teachingNotes.keyReasons : []).slice(0, 5).map((item, index) => ({
+      keyReasons: toArray(result.teachingNotes?.keyReasons).slice(0, 5).map((item, index) => ({
         id: String(item?.id || `reason-${index + 1}`),
         text: String(item?.text || item || ""),
         objectLabels: uniqueStrings(item?.objectLabels)
@@ -228,6 +296,8 @@ export function normalizeSolveResultV2(raw, { sourceText = "", model = "", provi
       model: String(result.generationMeta?.model || model || ""),
       provider: String(result.generationMeta?.provider || provider || ""),
       templateId: String(result.generationMeta?.templateId || ""),
+      constructionStrategy: String(result.generationMeta?.constructionStrategy || ""),
+      compilerVersion: String(result.generationMeta?.compilerVersion || ""),
       generatedAt: String(result.generationMeta?.generatedAt || new Date().toISOString()),
       fromCache: Boolean(result.generationMeta?.fromCache || fromCache)
     },

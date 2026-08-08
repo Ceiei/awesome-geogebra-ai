@@ -3,7 +3,7 @@ import { mergeDynamicControls } from "../shared/dynamicControls.js";
 import { enhanceSolidGeometryCommands } from "../shared/solidGeometryEnhancer.js";
 import { enhanceTeachingDiagramCommands } from "../shared/teachingDiagramEnhancer.js";
 import { normalizeStyleCommandTargets } from "../shared/styleTargetNormalizer.js";
-import { normalizeSolveResultV2 } from "../shared/solveResultV2.js";
+import { normalizeCommandList, normalizeSolveResultV2, unwrapSolveResult } from "../shared/solveResultV2.js";
 import { applyTeachingTheme } from "../shared/teachingTheme.js";
 import { labelAnonymousConstructions } from "../shared/ggbCommandParser.js";
 
@@ -188,23 +188,31 @@ export const commandJsonSchema = {
   schema: solveJsonSchema.schema
 };
 
+function normalizeListField(value) {
+  if (Array.isArray(value)) return value;
+  if (value === null || value === undefined || value === "") return [];
+  if (typeof value === "object") return Object.values(value);
+  return [value];
+}
+
 export function normalizeSolveResult(raw, context = {}) {
-  const result = raw && typeof raw === "object" ? raw : {};
+  const result = unwrapSolveResult(raw);
   const mathType = ["geometry", "function", "analytic_geometry", "solid_geometry"].includes(result.mathType)
     ? result.mathType
     : "geometry";
+  const sourceCommands = normalizeCommandList(result.ggbCommands);
   const enhancedCommands = normalizeStyleCommandTargets(enhanceTeachingDiagramCommands({
     mathType,
-    commands: enhanceSolidGeometryCommands({ mathType, commands: labelAnonymousConstructions(result.ggbCommands) })
+    commands: enhanceSolidGeometryCommands({ mathType, commands: labelAnonymousConstructions(sourceCommands) })
   }));
   const { validCommands, rejectedCommands } = validateGgbCommands(enhancedCommands);
 
   const legacyResult = {
     problemSummary: String(result.problemSummary ?? "").trim(),
     mathType,
-    constructionSteps: Array.isArray(result.constructionSteps)
-      ? result.constructionSteps.map((step) => String(step).trim()).filter(Boolean)
-      : [],
+    constructionSteps: normalizeListField(result.constructionSteps)
+      .map((step) => typeof step === "string" ? step.trim() : step)
+      .filter((step) => typeof step === "string" ? Boolean(step) : Boolean(step && typeof step === "object")),
     ggbCommands: validCommands,
     rejectedCommands,
     dynamicControls: mergeDynamicControls({
@@ -212,9 +220,9 @@ export function normalizeSolveResult(raw, context = {}) {
       dynamicControls: result.dynamicControls
     }),
     viewport: normalizeViewport(result.viewport),
-    warnings: Array.isArray(result.warnings)
-      ? result.warnings.map((warning) => String(warning).trim()).filter(Boolean)
-      : [],
+    warnings: normalizeListField(result.warnings)
+      .map((warning) => String(warning ?? "").trim())
+      .filter(Boolean),
     followupQuestion: result.followupQuestion ? String(result.followupQuestion).trim() : null
   };
   let normalized = normalizeSolveResultV2({

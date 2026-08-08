@@ -27,6 +27,10 @@ function isPointObject(object) {
 
 export function applyTeachingTheme(commands, objectManifest, { mathType = "geometry" } = {}) {
   const manifestLabels = new Set((objectManifest || []).map((object) => object.label));
+  const explicitlyHiddenLabels = new Set((commands || []).flatMap((command) => {
+    const match = String(command).match(/^\s*SetVisible\s*\(\s*([A-Za-z][A-Za-z0-9_]*)\s*,\s*false\s*\)/i);
+    return match ? [match[1]] : [];
+  }));
   const themed = (commands || []).filter((command) => {
     const match = String(command).match(/^\s*([A-Za-z][A-Za-z0-9_]*)\s*\(\s*([A-Za-z][A-Za-z0-9_]*)\s*,?/);
     return !(match && THEME_COMMAND_NAMES.has(match[1]) && manifestLabels.has(match[2]));
@@ -34,22 +38,39 @@ export function applyTeachingTheme(commands, objectManifest, { mathType = "geome
   for (const object of objectManifest || []) {
     if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(object.label)) continue;
     const style = ROLE_STYLE[object.role] || ROLE_STYLE.original;
-    themed.push(`SetColor(${object.label},${style.color})`);
+    const objectType = String(object.objectType || "").toLowerCase();
+    const isInfinite3DPlane = mathType === "solid_geometry" && objectType.includes("plane");
+    const isHelperPlanePatch = mathType === "solid_geometry" && objectType === "polygon" && object.role === "helper";
+    themed.push(`SetColor(${object.label},${isInfinite3DPlane ? "148,163,184" : (isHelperPlanePatch ? "96,165,250" : style.color)})`);
     if (isPointObject(object)) {
-      themed.push(`SetPointSize(${object.label},${["key", "conclusion"].includes(object.role) ? 6 : 5})`);
+      const pointSize = mathType === "solid_geometry"
+        ? (["key", "conclusion"].includes(object.role) ? 5 : 4)
+        : (["key", "conclusion"].includes(object.role) ? 6 : 5);
+      themed.push(`SetPointSize(${object.label},${pointSize})`);
       themed.push(`ShowLabel(${object.label},${object.role !== "hidden"})`);
       continue;
     }
     if (!NON_LINEAR_OBJECTS.has(object.objectType)) {
-      themed.push(`SetLineThickness(${object.label},${style.thickness})`);
-      themed.push(`SetLineStyle(${object.label},${style.lineStyle})`);
+      themed.push(`SetLineThickness(${object.label},${isHelperPlanePatch ? 2 : style.thickness})`);
+      themed.push(`SetLineStyle(${object.label},${isHelperPlanePatch ? 0 : style.lineStyle})`);
     }
-    if (style.filling !== undefined) {
-      const filling = mathType === "solid_geometry" ? Math.min(style.filling, 0.06) : style.filling;
+    if (isInfinite3DPlane) {
+      themed.push(`SetFilling(${object.label},0.045)`);
+    } else if (isHelperPlanePatch) {
+      themed.push(`SetFilling(${object.label},0.08)`);
+    } else if (style.filling !== undefined) {
+      const filling = mathType === "solid_geometry"
+        ? Math.min(style.filling, object.role === "region" ? 0.14 : 0.06)
+        : style.filling;
       themed.push(`SetFilling(${object.label},${filling})`);
     }
-    if (style.visible === false || object.visible === false) themed.push(`SetVisible(${object.label},false)`);
-    themed.push(`ShowLabel(${object.label},${["measurement", "conclusion"].includes(object.role)})`);
+    if (style.visible === false || object.visible === false || explicitlyHiddenLabels.has(object.label)) {
+      themed.push(`SetVisible(${object.label},false)`);
+    }
+    const showLabel = mathType === "solid_geometry"
+      ? object.role === "conclusion" && objectType !== "angle"
+      : ["measurement", "conclusion"].includes(object.role);
+    themed.push(`ShowLabel(${object.label},${showLabel})`);
   }
   return [...new Set(themed)];
 }
