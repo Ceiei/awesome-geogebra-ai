@@ -1066,6 +1066,26 @@ pre {
   background: #edf2f9;
 }
 
+.ggb-rendering-overlay {
+  position: absolute;
+  z-index: 8;
+  inset: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--text);
+  backdrop-filter: blur(2px);
+}
+
+.ggb-rendering-overlay strong {
+  font-size: 14px;
+  font-weight: 650;
+}
+
 #ggb-canvas {
   width: 100% !important;
   height: 100% !important;

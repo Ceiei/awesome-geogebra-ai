@@ -452,6 +452,7 @@ function GeoGebraCanvas({
   const appletRef = useRef(null);
   const demoRunRef = useRef(0);
   const [status, setStatus] = useState("正在加载 GeoGebra...");
+  const [isRendering, setIsRendering] = useState(false);
   const [commandResults, setCommandResults] = useState([]);
   const [renderQuality, setRenderQuality] = useState(null);
   const [canvasObjects, setCanvasObjects] = useState([]);
@@ -803,6 +804,8 @@ function GeoGebraCanvas({
 
   useEffect(() => {
     if (!renderRequest || !result || !appletRef.current) return;
+    setIsRendering(true);
+    setStatus("正在绘制并校验图形...");
     demoRunRef.current += 1;
     setIsPlayingDemo(false);
     setDemoFocusControl(null);
@@ -974,6 +977,11 @@ function GeoGebraCanvas({
             : { ...combinedQualityReport, checked: true, ok: false, issues: ["没有检测到可见 GeoGebra 对象"] },
           commandResults: nextCommandResults,
           objectNames
+        }).then((repairStarted) => {
+          if (!repairStarted) {
+            setIsRendering(false);
+            setStatus("当前图形未通过完整性检查，请重新生成");
+          }
         });
       } else {
         constructionCommitted = true;
@@ -986,6 +994,7 @@ function GeoGebraCanvas({
         });
         setLastRenderedSignature(currentRenderSignature);
         setStatus("已绘制");
+        setIsRendering(false);
       }
       if (constructionCommitted && semanticReport.requiresSemanticReview && typeof onSemanticReview === "function") {
         const reviewSignature = getRenderSignature(result, viewMode);
@@ -1030,6 +1039,20 @@ function GeoGebraCanvas({
       setCanvasObjects([]);
       setSelectedObject("");
       setLastRenderedSignature("");
+      void requestCommandRepair({
+        qualityReport: {
+          checked: true,
+          ok: false,
+          issues: [error?.message || "GeoGebra 执行过程中发生异常"]
+        },
+        commandResults: nextCommandResults,
+        objectNames
+      }).then((repairStarted) => {
+        if (!repairStarted) {
+          setIsRendering(false);
+          setStatus("当前图形未通过完整性检查，请重新生成");
+        }
+      });
     } finally {
       try {
         if (repaintingPaused) api.setRepaintingActive(true);
@@ -1104,6 +1127,7 @@ function GeoGebraCanvas({
     setCanvasObjects([]);
     setSelectedObject("");
     setLastRenderedSignature("");
+    setIsRendering(false);
     setStatus("已就绪");
   }
 
@@ -1542,6 +1566,12 @@ function GeoGebraCanvas({
       </div>
       <div className="ggb-shell" ref={shellRef}>
         <div id="ggb-canvas" ref={containerRef} />
+        {isRendering ? (
+          <div className="ggb-rendering-overlay" role="status" aria-live="polite">
+            <Loader2 className="spin" size={24} />
+            <strong>{status}</strong>
+          </div>
+        ) : null}
         {ggbLoadError ? (
           <div className="ggb-load-error" role="alert">
             <AlertTriangle size={24} />
@@ -2852,6 +2882,16 @@ function App() {
     writeHistory(restored.slice(0, 8));
   }
 
+  function renderToGeoGebra() {
+    setRenderRequest((value) => value + 1);
+    window.requestAnimationFrame(() => {
+      document.querySelector(".canvas-panel")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start"
+      });
+    });
+  }
+
   return (
     <main className={`app-shell${isTeachingMode ? " teaching-mode" : ""}`}>
       <InputPanel
@@ -2864,7 +2904,7 @@ function App() {
       <PreviewPanel
         result={latestResult}
         history={history}
-        onRender={() => setRenderRequest((value) => value + 1)}
+        onRender={renderToGeoGebra}
         onRegenerateCommands={regenerateCommands}
         onSelectHistory={selectHistory}
         onOpenCommands={() => setIsCommandOpen(true)}
