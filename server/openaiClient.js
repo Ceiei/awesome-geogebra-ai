@@ -326,6 +326,8 @@ function createOpenAIClient({ apiKey, baseUrl, model }) {
     : undefined;
   const client = new OpenAI({
     apiKey: resolvedApiKey,
+    timeout: 150000,
+    maxRetries: 0,
     ...(resolvedBaseUrl ? { baseURL: resolvedBaseUrl } : {}),
     ...(customProviderFetch ? { fetch: customProviderFetch } : {})
   });

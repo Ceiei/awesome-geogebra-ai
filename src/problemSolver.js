@@ -14,31 +14,14 @@ export async function requestProblemSolution({
   request = requestJson,
   onStage = () => {}
 }) {
-  let recognizedText = String(text || "").trim();
-
-  if (image) {
-    onStage("recognizing");
-    try {
-      const recognition = await request("/api/recognize", {
-        method: "POST",
-        body: createForm(recognizedText, image),
-        headers
-      }, "题图识别失败，请检查模型是否支持图片后重试。");
-      recognizedText = String(recognition.recognizedText || recognizedText).trim();
-    } catch (error) {
-      if (!recognizedText) throw error;
-    }
-    if (!recognizedText) {
-      throw new Error("没有从题图中识别到有效题目，请换用更清晰的图片。");
-    }
-  }
-
-  onStage("solving");
+  const sourceText = String(text || "").trim();
+  onStage(image ? "solving_image" : "solving");
   const payload = await request("/api/solve", {
     method: "POST",
-    body: createForm(recognizedText, null),
+    body: createForm(sourceText, image),
     headers
-  }, "题目解析失败，请重新尝试。");
+  }, image ? "题图理解与绘图方案生成失败，请重新尝试。" : "题目解析失败，请重新尝试。");
+  const recognizedText = String(payload.recognizedProblemText || sourceText).trim();
 
   return { payload, recognizedText };
 }

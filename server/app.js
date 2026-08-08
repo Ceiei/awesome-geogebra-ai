@@ -269,15 +269,18 @@ export function createApp() {
       return res.status(413).json({ error: "图片大小不能超过 8 MB。" });
     }
 
-    const status = error.statusCode || 500;
+    const isTimeout = /timeout|timed out|etimedout|request time.?out/i.test(String(error?.message || error?.code || ""));
+    const status = isTimeout ? 504 : (error.statusCode || 500);
     const submittedSecrets = [
       _req.get?.("X-OpenAI-API-Key"),
       _req.body?.apiKey,
       process.env.OPENAI_API_KEY
     ];
     res.status(status).json({
-      error: sanitizeErrorMessage(error.message || "服务器发生异常。", submittedSecrets),
-      code: error.code || "request_failed",
+      error: isTimeout
+        ? "模型生成绘图方案超时。系统未重复扣费调用，请重新尝试或换用响应更快的模型。"
+        : sanitizeErrorMessage(error.message || "服务器发生异常。", submittedSecrets),
+      code: isTimeout ? "upstream_timeout" : (error.code || "request_failed"),
       traceId: _req.traceId
     });
   });

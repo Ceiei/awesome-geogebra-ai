@@ -30,4 +30,12 @@ describe("API response parsing", () => {
     })))
       .rejects.toThrow("解析服务返回了无法识别的数据");
   });
+
+  it("keeps a structured upstream timeout explanation", async () => {
+    await expect(parseApiResponse(new Response(JSON.stringify({
+      error: "模型生成绘图方案超时。系统未重复扣费调用，请重新尝试或换用响应更快的模型。",
+      code: "upstream_timeout"
+    }), { status: 504 })))
+      .rejects.toThrow("模型生成绘图方案超时");
+  });
 });

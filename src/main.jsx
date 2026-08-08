@@ -2235,7 +2235,7 @@ function InputPanel({ onSolved, onReuseHistory, history, activeText, setActiveTe
           <button className="primary-button" type="submit" name="solve-mode" value="history" disabled={isSubmitting}>
             {isSubmitting ? <Loader2 className="spin" size={18} /> : <ChevronRight size={18} />}
             {isSubmitting
-              ? submissionStage === "recognizing" ? "正在识别题图" : "正在生成绘图方案"
+              ? submissionStage === "solving_image" ? "正在理解题图并生成方案" : "正在生成绘图方案"
               : "使用历史结果或解析"}
           </button>
           <button className="secondary-button" type="submit" name="solve-mode" value="reparse" disabled={isSubmitting}>
