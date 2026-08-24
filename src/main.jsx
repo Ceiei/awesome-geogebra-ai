@@ -66,6 +66,7 @@ import {
 } from "../shared/teachingDiagramEnhancer.js";
 import { findProviderByBaseUrl, providerPresets } from "../shared/providerPresets.js";
 import { validateSemanticContract } from "../shared/semanticValidator.js";
+import { diffMathematicalModels } from "../shared/constructionSemantics.js";
 import {
   PROMPT_VERSION,
   SOLVE_SCHEMA_VERSION,
@@ -76,7 +77,7 @@ import {
 import { loadGeoGebra } from "./ggbLoader.js";
 import { createDiagnosticReport, recordDiagnostic } from "./diagnostics.js";
 import { requestJson } from "./apiClient.js";
-import { requestProblemSolution } from "./problemSolver.js";
+import { requestProblemPlan } from "./problemSolver.js";
 import {
   createProjectBackup,
   deleteProject,
@@ -184,7 +185,10 @@ function formatControlValue(value) {
 }
 
 function formatDynamicControlLabel(control) {
+  const explicitLabel = String(control.label || "").trim();
+  if (explicitLabel) return explicitLabel;
   const description = String(control.description || "");
+  if (/截面/.test(description)) return description;
   const movingPoint = description.match(/动点\s*([A-Za-z][A-Za-z0-9_]*)/);
   if (movingPoint) return `动点${movingPoint[1]}`;
   if (/斜率|slope/i.test(description)) return "斜率";
@@ -371,7 +375,7 @@ function getObjectGeometryCategory(api, objectName, commandIndex, manifestObject
     apiType = "";
   }
 
-  const type = sourceType || apiType;
+  const type = apiType || String(manifestObject?.objectType || "").toLowerCase() || sourceType;
   if (["point", "center", "intersect", "midpoint", "vertex"].includes(type) || type.includes("point")) return "point";
   if (["polygon", "plane"].includes(type) || type.includes("polygon") || type.includes("plane")) return "surface";
   if (
@@ -440,6 +444,7 @@ function collectRuntimeObjectStates(api, objectManifest = []) {
 function GeoGebraCanvas({
   result,
   renderRequest,
+  simpleWorkflow = false,
   onRepairCommands,
   onSemanticReview,
   isTeachingMode,
@@ -804,8 +809,10 @@ function GeoGebraCanvas({
 
   useEffect(() => {
     if (!renderRequest || !result || !appletRef.current) return;
+    const automaticViewMode = result.mathType === "solid_geometry" ? "3d" : "2d";
+    if (!userSelectedViewRef.current && viewMode !== automaticViewMode) return;
     setIsRendering(true);
-    setStatus("正在绘制并校验图形...");
+    setStatus(simpleWorkflow ? "正在绘制图形..." : "正在绘制并校验图形...");
     demoRunRef.current += 1;
     setIsPlayingDemo(false);
     setDemoFocusControl(null);
@@ -920,6 +927,41 @@ function GeoGebraCanvas({
         } catch {
           // Keep the construction usable even if a generated slider name is missing.
         }
+      }
+      if (simpleWorkflow) {
+        const requiredRegionLabels = (result.objectManifest || [])
+          .filter((object) => object.role === "region" && object.visible !== false)
+          .map((object) => object.label);
+        const hasRequiredRegions = requiredRegionLabels.every((label) => api.isDefined?.(label) !== false);
+        const hasRenderedObject = Boolean(
+          (objectNames.length || nextCommandResults.some((item) => item.ok))
+          && hasRequiredRegions
+        );
+        setRenderQuality(null);
+        if (!hasRenderedObject) {
+          if (previousConstructionXml) api.setXML?.(previousConstructionXml);
+          else api.newConstruction();
+          setCommandResults([]);
+          setCanvasObjects([]);
+          setSelectedObject("");
+          setLastRenderedSignature("");
+          setStatus("未能生成图形，请修改构造步骤后重试");
+          setIsRendering(false);
+          return;
+        }
+
+        constructionCommitted = true;
+        setCommandResults(nextCommandResults);
+        setCanvasObjects(inspectableObjects);
+        setSelectedObject((current) => {
+          const nextSelected = current && inspectableObjects.includes(current) ? current : inspectableObjects[0] || "";
+          if (nextSelected) window.setTimeout(() => selectCanvasObject(nextSelected, { announce: false }), 0);
+          return nextSelected;
+        });
+        setLastRenderedSignature(currentRenderSignature);
+        setStatus("已绘制");
+        setIsRendering(false);
+        return;
       }
       const qualityReport = assessRenderQuality({
         api,
@@ -1514,15 +1556,6 @@ function GeoGebraCanvas({
           >
             <Settings2 size={17} />
           </button>
-          <button
-            className={`icon-button${isTeachingMode ? " is-active" : ""}`}
-            type="button"
-            onClick={onToggleTeachingMode}
-            title={isTeachingMode ? "退出授课模式" : "进入授课模式"}
-            aria-label={isTeachingMode ? "退出授课模式" : "进入授课模式"}
-          >
-            {isTeachingMode ? <BookOpen size={17} /> : <Presentation size={17} />}
-          </button>
           <button className="icon-button canvas-zoom-control" type="button" onClick={() => changeZoom("in")} title="放大画布">
             <ZoomIn size={17} />
           </button>
@@ -1642,7 +1675,6 @@ function GeoGebraCanvas({
               <label className="canvas-dynamic-control" key={`${control.name}-${control.min}-${control.max}`}>
                 <span className="canvas-dynamic-label">
                   <span className="canvas-dynamic-name">{label}</span>
-                  {!/_(?:axial|rotation)$/i.test(control.name) ? <strong>{control.name}</strong> : null}
                 </span>
                 <input
                   type="range"
@@ -2066,7 +2098,7 @@ async function createImageFingerprint(file) {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function InputPanel({ onSolved, onReuseHistory, history, activeText, setActiveText }) {
+function InputPanel({ onAnalyzed, activeText, setActiveText }) {
   const [image, setImage] = useState(null);
   const [imagePreview, setImagePreview] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -2122,7 +2154,6 @@ function InputPanel({ onSolved, onReuseHistory, history, activeText, setActiveTe
 
   async function submitProblem(event) {
     event.preventDefault();
-    const forceReparse = event.nativeEvent?.submitter?.value === "reparse";
     setError("");
     setNotice("");
 
@@ -2138,55 +2169,20 @@ function InputPanel({ onSolved, onReuseHistory, history, activeText, setActiveTe
 
     setIsSubmitting(true);
     try {
-      const imageFingerprint = await createImageFingerprint(image);
       const apiSettings = readApiSettings();
-      const selectedProvider = providerPresets.find((provider) => provider.baseUrl === apiSettings.baseUrl)?.id || "custom";
-      const cacheKey = createHistoryCacheKey({
-        text: activeText,
-        imageFingerprint,
-        promptVersion: PROMPT_VERSION,
-        templateVersion: TEMPLATE_VERSION,
-        schemaVersion: SOLVE_SCHEMA_VERSION,
-        validatorVersion: VALIDATOR_VERSION,
-        provider: selectedProvider,
-        model: apiSettings.model
-      });
-      const cachedItem = findHistoryCacheHit(history, cacheKey, {
-        text: activeText,
-        hasImage: Boolean(image),
-        forceReparse
-      });
-      if (cachedItem) {
-        onReuseHistory(cachedItem);
-        setNotice("已读取本地历史解析结果，未重复调用模型。");
-        return;
-      }
-
       const headers = {};
       if (apiSettings.apiKey) headers["X-OpenAI-API-Key"] = apiSettings.apiKey;
       if (apiSettings.baseUrl) headers["X-OpenAI-Base-URL"] = apiSettings.baseUrl;
       if (apiSettings.model) headers["X-OpenAI-Model"] = apiSettings.model;
-      const { payload, recognizedText } = await requestProblemSolution({
+      const { payload, recognizedText } = await requestProblemPlan({
         text: activeText,
         image,
         headers,
         onStage: setSubmissionStage
       });
       if (image && recognizedText) setActiveText(recognizedText);
-      onSolved(payload, {
-        promptText: recognizedText || activeText,
-        imageName: image?.name || null,
-        imagePreview,
-        imageFingerprint,
-        cacheKey
-      });
-      recordDiagnostic({
-        traceId: payload.traceId,
-        stage: "solve",
-        status: "success",
-        mathType: payload.mathType,
-        semanticStatus: payload.semanticReport?.status || "unchecked"
-      });
+      onAnalyzed(payload);
+      setNotice("已生成构造步骤，可在右侧修改后生成图形。");
     } catch (requestError) {
       setError(requestError.message);
     } finally {
@@ -2221,14 +2217,6 @@ function InputPanel({ onSolved, onReuseHistory, history, activeText, setActiveTe
         />
         <p className="paste-hint">支持直接粘贴 PNG、JPEG 或 WebP 题目图片</p>
 
-        <div className="example-list">
-          {examples.slice(0, 2).map((example) => (
-            <button className="example-chip" key={example} type="button" onClick={() => setActiveText(example)}>
-              {example}
-            </button>
-          ))}
-        </div>
-
         <label className="upload-zone">
           <input
             type="file"
@@ -2261,16 +2249,12 @@ function InputPanel({ onSolved, onReuseHistory, history, activeText, setActiveTe
 
         {notice ? <div className="success-box"><CheckCircle2 size={16} /><span>{notice}</span></div> : null}
 
-        <div className="solve-actions">
-          <button className="primary-button" type="submit" name="solve-mode" value="history" disabled={isSubmitting}>
+        <div className="solve-actions single-action">
+          <button className="primary-button" type="submit" disabled={isSubmitting}>
             {isSubmitting ? <Loader2 className="spin" size={18} /> : <ChevronRight size={18} />}
             {isSubmitting
-              ? submissionStage === "solving_image" ? "正在理解题图并生成方案" : "正在生成绘图方案"
-              : "使用历史结果或解析"}
-          </button>
-          <button className="secondary-button" type="submit" name="solve-mode" value="reparse" disabled={isSubmitting}>
-            <RefreshCw size={16} />
-            重新解析
+              ? submissionStage === "planning_image" ? "正在分析题图" : "正在分析题目"
+              : "解析题目"}
           </button>
         </div>
       </form>
@@ -2292,6 +2276,7 @@ function PreviewPanel({
   const [editableSteps, setEditableSteps] = useState("");
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [regenerateError, setRegenerateError] = useState("");
+  const [regenerateNotice, setRegenerateNotice] = useState("");
   const [notesHidden, setNotesHidden] = useState(false);
   const [editableConclusion, setEditableConclusion] = useState("");
   const [editableReasons, setEditableReasons] = useState("");
@@ -2314,8 +2299,12 @@ function PreviewPanel({
 
     setIsRegenerating(true);
     setRegenerateError("");
+    setRegenerateNotice("");
     try {
-      await onRegenerateCommands(constructionSteps);
+      const update = await onRegenerateCommands(constructionSteps);
+      setRegenerateNotice(update?.changed
+        ? `已根据修改后的步骤更新为 ${update.commandCount} 条命令。`
+        : "已保存修改后的步骤；当前构图命令无需变化。");
     } catch (error) {
       setRegenerateError(error.message || "重新生成命令失败。");
     } finally {
@@ -2364,6 +2353,12 @@ function PreviewPanel({
               <div className="error-box compact">
                 <AlertTriangle size={15} />
                 <span>{regenerateError}</span>
+              </div>
+            ) : null}
+            {regenerateNotice ? (
+              <div className="success-box compact">
+                <CheckCircle2 size={15} />
+                <span>{regenerateNotice}</span>
               </div>
             ) : null}
           </div>
@@ -2450,6 +2445,84 @@ function PreviewPanel({
           <p className="muted">解析过的题目会在本地复用，避免重复调用模型。</p>
         )}
       </div>
+    </section>
+  );
+}
+
+function ConstructionPlanPanel({ plan, result, onGenerateAndDraw }) {
+  const [editableSteps, setEditableSteps] = useState("");
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [semanticChanges, setSemanticChanges] = useState([]);
+
+  useEffect(() => {
+    setEditableSteps(plan?.constructionSteps?.map(getConstructionStepText).join("\n") || "");
+    setMessage("");
+    setError("");
+    setSemanticChanges(plan?.semanticDiff?.changes || []);
+  }, [plan]);
+
+  async function generateAndDraw() {
+    const constructionSteps = normalizeEditableSteps(editableSteps, plan?.constructionSteps || []);
+    if (!constructionSteps.length) {
+      setError("请至少保留一条构造步骤。");
+      return;
+    }
+    setIsGenerating(true);
+    setMessage("");
+    setError("");
+    try {
+      const generation = await onGenerateAndDraw(constructionSteps);
+      setMessage(`已生成 ${generation.commandCount} 条 GGB 命令并绘制到画布。`);
+      setSemanticChanges(generation.semanticDiff?.changes || []);
+    } catch (generationError) {
+      setError(generationError.message || "生成 GGB 命令失败，请重试。");
+    } finally {
+      setIsGenerating(false);
+    }
+  }
+
+  return (
+    <section className="panel preview-panel simple-plan-panel">
+      <div className="panel-header">
+        <div>
+          <h2>构造步骤</h2>
+          <p>{plan ? "可直接修改，每行一个步骤" : "解析题目后在此生成步骤"}</p>
+        </div>
+        <Braces size={20} />
+      </div>
+      {plan ? (
+        <div className="simple-plan-content">
+          <textarea
+            className="steps-editor simplified"
+            value={editableSteps}
+            onChange={(event) => setEditableSteps(event.target.value)}
+            aria-label="构造步骤"
+            placeholder="每行一个构造步骤"
+          />
+          <button className="primary-button" type="button" onClick={generateAndDraw} disabled={isGenerating}>
+            {isGenerating ? <Loader2 className="spin" size={17} /> : <Play size={17} />}
+            {isGenerating ? "正在生成并绘制" : "生成 GGB 命令并绘制"}
+          </button>
+          {message ? <div className="success-box compact"><CheckCircle2 size={15} /><span>{message}</span></div> : null}
+          {semanticChanges.length ? (
+            <div className="semantic-change-box" aria-label="已识别的构造变化">
+              <strong>已识别构造变化</strong>
+              {semanticChanges.slice(0, 6).map((change, index) => (
+                <span key={`${change.category}-${change.type}-${index}`}>{change.message}</span>
+              ))}
+            </div>
+          ) : null}
+          {error ? <div className="error-box compact"><AlertTriangle size={15} /><span>{error}</span></div> : null}
+          {result?.ggbCommands?.length ? <p className="muted">当前画布使用 {result.ggbCommands.length} 条命令</p> : null}
+        </div>
+      ) : (
+        <div className="empty-state">
+          <FileImage size={30} />
+          <p>先在左侧输入题目并点击“解析题目”。</p>
+        </div>
+      )}
     </section>
   );
 }
@@ -2655,7 +2728,7 @@ function HistoryDialog({
   );
 }
 
-function App() {
+function LegacyApp() {
   const [activeText, setActiveText] = useState("");
   const [result, setResult] = useState(null);
   const [history, setHistory] = useState(() => readHistory());
@@ -2770,18 +2843,25 @@ function App() {
         mathType: latestResult.mathType,
         problemContract: latestResult.problemContract,
         viewport: latestResult.viewport,
-        constructionSteps
+        constructionSteps,
+        previousConstructionSteps: latestResult.constructionSteps,
+        previousCommands: latestResult.ggbCommands
       })
     }, "重新生成命令失败，请稍后重试。");
 
+    const previousCommands = latestResult.ggbCommands || [];
+    const nextCommands = payload.ggbCommands || [];
+    const changed = JSON.stringify(previousCommands) !== JSON.stringify(nextCommands);
     setResult((current) => current ? {
       ...current,
       ...payload,
+      constructionSteps,
       problemSummary: current.problemSummary,
       mathType: current.mathType,
       problemContract: current.problemContract,
       recognizedProblemText: current.recognizedProblemText
     } : payload);
+    return { changed, commandCount: nextCommands.length };
   }
 
   async function repairCommands(repairContext) {
@@ -2942,6 +3022,79 @@ function App() {
           onClose={() => setIsHistoryOpen(false)}
         />
       ) : null}
+    </main>
+  );
+}
+
+function App() {
+  const [activeText, setActiveText] = useState("");
+  const [plan, setPlan] = useState(null);
+  const [result, setResult] = useState(null);
+  const [renderRequest, setRenderRequest] = useState(0);
+
+  function handleAnalyzed(nextPlan) {
+    const semanticDiff = diffMathematicalModels(plan?.constructionModel, nextPlan?.constructionModel);
+    setPlan({ ...nextPlan, semanticDiff });
+    if (nextPlan?.recognizedProblemText) setActiveText(nextPlan.recognizedProblemText);
+  }
+
+  async function generateAndDraw(constructionSteps) {
+    const apiSettings = readApiSettings();
+    const headers = { "Content-Type": "application/json" };
+    if (apiSettings.apiKey) headers["X-OpenAI-API-Key"] = apiSettings.apiKey;
+    if (apiSettings.baseUrl) headers["X-OpenAI-Base-URL"] = apiSettings.baseUrl;
+    if (apiSettings.model) headers["X-OpenAI-Model"] = apiSettings.model;
+
+    const payload = await requestJson("/api/commands", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        constructionSteps,
+        previousConstructionModel: plan?.constructionModel || null
+      })
+    }, "生成 GGB 命令失败，请稍后重试。");
+    const normalized = normalizeSolveResultV2({
+      ...payload,
+      constructionSteps,
+      recognizedProblemText: "",
+      problemSummary: ""
+    }, { sourceText: constructionSteps.map((step) => step.text).join("\n") });
+    setResult({ ...payload, ...normalized, constructionSteps, rejectedCommands: payload.rejectedCommands || [] });
+    setPlan((current) => current ? {
+      ...current,
+      constructionSteps,
+      constructionModel: payload.constructionModel || current.constructionModel,
+      semanticDiff: payload.semanticDiff || { changed: false, changes: [] }
+    } : current);
+    setRenderRequest((value) => value + 1);
+    window.requestAnimationFrame(() => {
+      document.querySelector(".canvas-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    return {
+      commandCount: normalized.ggbCommands.length,
+      semanticDiff: payload.semanticDiff || { changed: false, changes: [] }
+    };
+  }
+
+  return (
+    <main className="app-shell simplified-workflow">
+      <InputPanel
+        activeText={activeText}
+        setActiveText={setActiveText}
+        onAnalyzed={handleAnalyzed}
+      />
+      <ConstructionPlanPanel
+        plan={plan}
+        result={result}
+        onGenerateAndDraw={generateAndDraw}
+      />
+      <GeoGebraCanvas
+        result={result}
+        renderRequest={renderRequest}
+        simpleWorkflow
+        isTeachingMode={false}
+        onToggleTeachingMode={() => {}}
+      />
     </main>
   );
 }

@@ -13,7 +13,10 @@ function includesAny(source, keywords) {
 }
 
 export function classifyPromptProfile({ text = "", mathType = "", constructionSteps = [], hasImage = false } = {}) {
-  const source = compactText([text, ...constructionSteps].join(" "));
+  const source = compactText([
+    text,
+    ...constructionSteps.map((step) => typeof step === "string" ? step : step?.text || "")
+  ].join(" "));
   const normalizedMathType = profileIds.has(mathType) ? mathType : "";
 
   if (!source && !normalizedMathType && hasImage) {
@@ -192,6 +195,7 @@ function buildSolidGeometryPrompt({ subType }) {
     "PROFILE: solid geometry 3D teaching diagram.",
     sectionRule,
     "Use true 3D coordinates for all spatial points. Use mathType solid_geometry.",
+    "Preserve section orientation exactly: relative to base z=0, a horizontal section uses z=h and intersects vertical edges; a vertical section uses x=s or y=s and intersects horizontal top/bottom edges. If no direction is specified, use an arbitrary plane with independent orientation and position controls and Intersect(plane,polyhedron); do not silently default to horizontal. Never represent a vertical section as z=h.",
     "For prisms, pyramids, cubes, and polyhedra, explicitly draw every visible structural edge with named Segment commands before adding auxiliary planes or calculations.",
     "Use dark solid segments for main visible edges. Use gray dashed segments for hidden or auxiliary edges. Use one thicker dark segment for the key line being studied.",
     "Use infinite Plane objects only for calculations, then hide them with SetVisible(plane,false). For visible faces or auxiliary planes, draw finite Polygon objects with filling at most 0.04 so they do not obscure the solid.",
@@ -225,6 +229,16 @@ function buildProfilePrompt(profile) {
   return buildGeometryPrompt(profile);
 }
 
+function buildPlanningProfilePrompt(profile) {
+  const prompts = {
+    geometry: "平面几何：步骤应覆盖题设点线、边界图形及必要的垂线、平行线、中点、角平分线和目标区域。",
+    function: "函数：步骤应覆盖实际函数式、关键点、坐标轴、题目要求的区间或辅助线，以及有教学意义的参数变化。",
+    analytic_geometry: "解析几何：步骤应覆盖原方程、关键点、动点依赖关系、交点、垂足、切线或轨迹，以及题目关注的区域。",
+    solid_geometry: "立体几何：步骤应覆盖全部顶点、棱、关键平面和辅助线，明确动态依赖，并注明需要区分可见棱与隐藏棱。必须保持截面方向：底面为 z=0 时，水平截面用 z=h，垂直截面用 x=s 或 y=s；未指定方向时必须用方向与位置参数描述任意平面，不得默认成水平截面。"
+  };
+  return prompts[profile.id] || prompts.geometry;
+}
+
 export function buildSystemPrompt(context = {}) {
   const profile = classifyPromptProfile(context);
   return [
@@ -235,6 +249,47 @@ export function buildSystemPrompt(context = {}) {
     buildProfilePrompt(profile),
     "",
     "Before finalizing JSON, internally verify that every named object in constructionSteps has a corresponding GeoGebra command, every style command targets a named existing object, every area target has a visible filled region, and every dynamicControls item has a matching Slider command. Do not include this verification text in the JSON."
+  ].join("\n");
+}
+
+export function buildCommandSystemPrompt(context = {}) {
+  const profile = classifyPromptProfile(context);
+  return [
+    "You rebuild a complete GeoGebra construction from teacher-edited construction steps.",
+    "Use only the supplied edited steps. Do not infer from any earlier problem text or command list.",
+    "First convert all edited steps into a domain-independent dependency graph of mathematical entities, relations, constraints, parameters, targets, and presentation roles. Then generate commands from that graph.",
+    "Treat every semantic edit as authoritative: changes to equations, numeric values, point names, parallel/perpendicular relations, fixed/moving status, targets, dimension, or plane orientation must change the corresponding dependent construction.",
+    "Never select commands from a problem-type keyword alone. Choose each GeoGebra operation from the typed inputs and mathematical relation it implements.",
+    "Return only one valid json object using the compact command JSON shape requested by the user message.",
+    "Use English GeoGebra command names with parentheses and define every object before use.",
+    "Use ASCII object labels only: convert A₁ to A1, P₁ to P1, and similar subscripted names before writing commands.",
+    "Give every constructed or styled object a stable label; never style an anonymous expression.",
+    "Generate a complete replacement command list, not a patch or explanation.",
+    "For meaningful moving objects, generate native Slider assignments and dependent objects.",
+    "For target areas, create a named Polygon and visible translucent filling.",
+    "Do not generate JavaScript, HTML, scripts, files, network operations, or destructive commands.",
+    `Allowed GeoGebra command names: ${allowedCommandsForPrompt.join(", ")}.`,
+    `SELECTED_PROFILE: ${profile.id}`,
+    `SELECTED_SUBTYPE: ${profile.subType}`,
+    buildProfilePrompt(profile),
+    "Before returning JSON, verify object definition order, style targets, required regions, and slider dependencies internally."
+  ].join("\n");
+}
+
+export function buildPlanSystemPrompt(context = {}) {
+  const profile = classifyPromptProfile(context);
+  return [
+    "You analyze a high-school math problem and produce only a GeoGebra construction plan.",
+    "Return only one valid json object containing recognizedProblemText, mathType, and constructionSteps.",
+    "constructionSteps must be a concise ordered array of Simplified Chinese strings.",
+    "Each step must depend only on earlier steps. Do not generate GeoGebra commands, object manifests, teaching notes, explanations, proofs, or conclusions.",
+    "Preserve all equations, point names, fixed values, geometric relations, and requested objects from the problem.",
+    "First map the problem to entities, relations, constraints, parameters, targets, and dependencies; every semantic edit must change the corresponding plan instead of reusing a whole-problem template.",
+    "Use concise Simplified Chinese teacher-facing step text.",
+    "Include visible subject objects, necessary auxiliary lines, target regions, and meaningful dynamic objects in the ordered steps.",
+    `SELECTED_PROFILE: ${profile.id}`,
+    `SELECTED_SUBTYPE: ${profile.subType}`,
+    buildPlanningProfilePrompt(profile)
   ].join("\n");
 }
 

@@ -22,6 +22,33 @@ describe("dynamic control extraction", () => {
     ]);
   });
 
+  it("preserves teacher labels and initial values for custom controls", () => {
+    expect(mergeDynamicControls({
+      commands: ["azimuth=Slider(0,360,1)"],
+      dynamicControls: [{
+        name: "azimuth",
+        label: "截面方位角",
+        description: "截面法向方位角",
+        min: 0,
+        max: 360,
+        step: 1,
+        defaultValue: 45,
+        unit: "°",
+        affectedObjects: ["cutPlane", "cutSection"]
+      }]
+    })).toEqual([{
+      name: "azimuth",
+      label: "截面方位角",
+      description: "截面法向方位角",
+      min: 0,
+      max: 360,
+      step: 1,
+      defaultValue: 45,
+      unit: "°",
+      affectedObjects: ["cutPlane", "cutSection"]
+    }]);
+  });
+
   it("supports legacy Slider(label, min, max, step) commands from edited input", () => {
     expect(extractSliderControls([
       "Slider(t, -2, 2, 0.5, 1, false, true, false, false)",

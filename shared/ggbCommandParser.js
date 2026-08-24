@@ -117,7 +117,9 @@ export function parseGgbCommand(rawCommand) {
   const assignment = command.match(/^\s*([A-Za-z][A-Za-z0-9_]*)\s*=\s*([\s\S]+?)\s*$/);
   const label = assignment?.[1] || "";
   const expression = assignment?.[2] || command;
-  const call = expression.match(/^\s*([A-Za-z][A-Za-z0-9_]*)\s*\(([\s\S]*)\)\s*$/);
+  const callMatch = expression.match(/^\s*([A-Za-z][A-Za-z0-9_]*)\s*\(([\s\S]*)\)\s*$/);
+  const callArguments = callMatch ? splitGgbArguments(callMatch[2]) : null;
+  const call = callArguments ? callMatch : null;
   const labeledEquation = command.match(/^\s*([A-Za-z][A-Za-z0-9_]*)\s*:\s*([\s\S]+)$/);
   const functionAssignment = command.match(/^\s*([A-Za-z][A-Za-z0-9_]*)\s*\(\s*x\s*\)\s*=\s*([\s\S]+)$/);
   const pointAssignment = assignment && expression.match(/^\s*\(([\s\S]*)\)\s*$/);
@@ -161,7 +163,7 @@ export function parseGgbCommand(rawCommand) {
 
   if (call) {
     const commandName = call[1];
-    const args = splitGgbArguments(call[2]);
+    const args = callArguments;
     return {
       raw: command,
       kind: STYLE_COMMANDS.has(commandName) ? "style" : (label ? "construction" : "command"),

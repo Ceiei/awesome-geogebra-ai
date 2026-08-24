@@ -41,12 +41,22 @@ function normalizeControl(control) {
     return null;
   }
 
+  const defaultValue = Number(control?.defaultValue);
+  const label = String(control?.label ?? "").trim();
+  const unit = String(control?.unit ?? "").trim();
+  const affectedObjects = Array.isArray(control?.affectedObjects)
+    ? control.affectedObjects.map((item) => String(item).trim()).filter(Boolean)
+    : [];
   return {
     name,
     description: String(control?.description ?? "").trim(),
     min,
     max,
-    step
+    step,
+    ...(label ? { label } : {}),
+    ...(Number.isFinite(defaultValue) ? { defaultValue: Math.min(max, Math.max(min, defaultValue)) } : {}),
+    ...(unit ? { unit } : {}),
+    ...(affectedObjects.length ? { affectedObjects } : {})
   };
 }
 

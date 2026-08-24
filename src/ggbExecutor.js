@@ -8,6 +8,38 @@ function isDefined(api, label) {
   return typeof api.isDefined !== "function" || api.isDefined(label);
 }
 
+function getAssignedLabel(command) {
+  return command.match(/^\s*([A-Za-z][A-Za-z0-9_]*)\s*=/)?.[1] || "";
+}
+
+function evalConstructionCommand(api, command) {
+  const assignedLabel = getAssignedLabel(command);
+  const canRepairGeneratedLabel = Boolean(
+    assignedLabel
+    && typeof api.getAllObjectNames === "function"
+    && typeof api.isDefined === "function"
+    && typeof api.renameObject === "function"
+  );
+  const namesBefore = canRepairGeneratedLabel ? new Set(api.getAllObjectNames()) : null;
+  const evaluated = Boolean(api.evalCommand(command));
+  if (!evaluated || !canRepairGeneratedLabel || api.isDefined(assignedLabel)) return evaluated;
+
+  // GeoGebra gives the main result of some multi-output 3D commands a suffixed
+  // label (for example cutSection_{1}). Restore the requested label so all
+  // later style commands and object-manifest references address the real object.
+  const generatedLabel = api.getAllObjectNames().find((label) => (
+    !namesBefore.has(label) && new RegExp(`^${assignedLabel}_(?:\\d+|\\{\\d+\\})$`).test(label)
+  ));
+  if (!generatedLabel) return evaluated;
+
+  try {
+    api.renameObject(generatedLabel, assignedLabel);
+    return api.isDefined(assignedLabel);
+  } catch {
+    return evaluated;
+  }
+}
+
 const namedColors = new Map([
   ["black", [0, 0, 0]], ["dark gray", [80, 80, 80]], ["gray", [128, 128, 128]],
   ["dark blue", [0, 0, 128]], ["blue", [0, 0, 255]], ["dark green", [0, 100, 0]],
@@ -122,7 +154,7 @@ export function executeGgbCommand(api, rawCommand) {
   try {
     const styleResult = executeStyleCommand(api, command);
     if (styleResult !== null) return { command, ok: styleResult };
-    return { command, ok: Boolean(api.evalCommand(command)) };
+    return { command, ok: evalConstructionCommand(api, command) };
   } catch {
     return { command, ok: false };
   }

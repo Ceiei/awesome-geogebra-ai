@@ -17,6 +17,29 @@ describe("GeoGebra command executor", () => {
     expect(api.evalCommand).toHaveBeenCalledWith("Angle(vDE,n1)");
   });
 
+  it("restores the requested label for a multi-output GeoGebra command", () => {
+    const names = ["cutPlane", "cubeSolid"];
+    const api = {
+      evalCommand: vi.fn(() => {
+        names.push("cutSection_{1}", "H", "I", "J");
+        return true;
+      }),
+      getAllObjectNames: vi.fn(() => [...names]),
+      isDefined: vi.fn((label) => names.includes(label)),
+      renameObject: vi.fn((from, to) => {
+        names[names.indexOf(from)] = to;
+        return true;
+      })
+    };
+
+    expect(executeGgbCommand(api, "cutSection=Intersect(cutPlane,cubeSolid)")).toEqual({
+      command: "cutSection=Intersect(cutPlane,cubeSolid)",
+      ok: true
+    });
+    expect(api.renameObject).toHaveBeenCalledWith("cutSection_{1}", "cutSection");
+    expect(names).toContain("cutSection");
+  });
+
   it("uses the Apps API for label styling after the object exists", () => {
     const api = {
       isDefined: vi.fn(() => true),

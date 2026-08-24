@@ -182,10 +182,43 @@ export const solveJsonSchema = {
   }
 };
 
+export const planJsonSchema = {
+  name: "geogebra_construction_steps",
+  strict: true,
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["recognizedProblemText", "mathType", "constructionSteps"],
+    properties: {
+      recognizedProblemText: solveJsonSchema.schema.properties.recognizedProblemText,
+      mathType: solveJsonSchema.schema.properties.mathType,
+      constructionSteps: {
+        type: "array",
+        items: { type: "string" }
+      }
+    }
+  }
+};
+
 export const commandJsonSchema = {
   name: "geogebra_commands_from_steps",
   strict: true,
-  schema: solveJsonSchema.schema
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "mathType",
+      "ggbCommands",
+      "dynamicControls",
+      "viewport"
+    ],
+    properties: {
+      mathType: solveJsonSchema.schema.properties.mathType,
+      ggbCommands: solveJsonSchema.schema.properties.ggbCommands,
+      dynamicControls: solveJsonSchema.schema.properties.dynamicControls,
+      viewport: solveJsonSchema.schema.properties.viewport
+    }
+  }
 };
 
 function normalizeListField(value) {

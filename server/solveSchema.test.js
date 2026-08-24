@@ -1,7 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { normalizeSolveResult } from "./solveSchema.js";
+import { commandJsonSchema, normalizeSolveResult } from "./solveSchema.js";
 
 describe("solve result normalization", () => {
+  it("keeps command regeneration output compact", () => {
+    expect(commandJsonSchema.schema.required).toEqual([
+      "mathType",
+      "ggbCommands",
+      "dynamicControls",
+      "viewport"
+    ]);
+    expect(commandJsonSchema.schema.properties).not.toHaveProperty("problemContract");
+    expect(commandJsonSchema.schema.properties).not.toHaveProperty("teachingNotes");
+    expect(commandJsonSchema.schema.properties).not.toHaveProperty("objectManifest");
+    expect(commandJsonSchema.schema.properties).not.toHaveProperty("dynamicCandidates");
+    expect(commandJsonSchema.schema.properties).not.toHaveProperty("warnings");
+  });
+
   it("keeps valid dynamic controls for slider-based demonstrations", () => {
     const result = normalizeSolveResult({
       problemSummary: "动点面积演示",

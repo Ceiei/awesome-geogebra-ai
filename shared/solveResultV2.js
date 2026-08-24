@@ -1,7 +1,7 @@
 import { parseGgbCommand } from "./ggbCommandParser.js";
 
 export const SOLVE_SCHEMA_VERSION = 2;
-export const PROMPT_VERSION = "2026-08-08-staged-vision-v6";
+export const PROMPT_VERSION = "2026-08-24-fast-regeneration-v7";
 export const TEMPLATE_VERSION = "2026-08-08-parameterized-v6";
 export const VALIDATOR_VERSION = "2026-08-08-visual-v4";
 
@@ -296,6 +296,7 @@ export function normalizeSolveResultV2(raw, { sourceText = "", model = "", provi
       model: String(result.generationMeta?.model || model || ""),
       provider: String(result.generationMeta?.provider || provider || ""),
       templateId: String(result.generationMeta?.templateId || ""),
+      sectionOrientation: String(result.generationMeta?.sectionOrientation || ""),
       constructionStrategy: String(result.generationMeta?.constructionStrategy || ""),
       compilerVersion: String(result.generationMeta?.compilerVersion || ""),
       generatedAt: String(result.generationMeta?.generatedAt || new Date().toISOString()),

@@ -1,7 +1,26 @@
 import { describe, expect, it } from "vitest";
-import { buildSystemPrompt, getPromptProfileSummary } from "./promptProfiles.js";
+import { buildCommandSystemPrompt, buildPlanSystemPrompt, buildSystemPrompt, getPromptProfileSummary } from "./promptProfiles.js";
 
 describe("prompt profiles", () => {
+  it("explicitly requests json for providers that validate json_object messages", () => {
+    expect(buildPlanSystemPrompt({ text: "绘制函数 y=x^2" })).toMatch(/\bjson\b/);
+    expect(buildCommandSystemPrompt({ constructionSteps: [{ text: "绘制函数 y=x^2" }] })).toMatch(/\bjson\b/);
+  });
+
+  it("keeps the planning prompt focused on steps instead of command syntax", () => {
+    const prompt = buildPlanSystemPrompt({ text: "已知椭圆上有动点 P" });
+    expect(prompt).not.toContain("Allowed GeoGebra command names");
+    expect(prompt).not.toContain("SetLineThickness");
+    expect(prompt.length).toBeLessThan(1200);
+  });
+
+  it("distinguishes horizontal and vertical solid sections", () => {
+    const prompt = buildCommandSystemPrompt({ constructionSteps: [{ text: "用垂直平面截正方体" }] });
+    expect(prompt).toContain("horizontal section uses z=h");
+    expect(prompt).toContain("vertical section uses x=s or y=s");
+    expect(prompt).toContain("Never represent a vertical section as z=h");
+  });
+
   it("selects solid geometry rules for spatial problems", () => {
     const profile = getPromptProfileSummary({
       text: "在直三棱柱 ABC-A1B1C1 中证明线面平行并求距离。"
@@ -76,5 +95,18 @@ describe("prompt profiles", () => {
     });
 
     expect(profile).toEqual({ id: "analytic_geometry", subType: "conic_ellipse" });
+  });
+
+  it("uses a compact command-only prompt for step regeneration", () => {
+    const context = {
+      mathType: "analytic_geometry",
+      constructionSteps: ["创建动点 P。", "填充三角形 ABP。"]
+    };
+    const commandPrompt = buildCommandSystemPrompt(context);
+
+    expect(commandPrompt).toContain("Use only the supplied edited steps");
+    expect(commandPrompt).toContain("complete replacement command list");
+    expect(commandPrompt).not.toContain("Return schemaVersion=2");
+    expect(commandPrompt.length).toBeLessThan(buildSystemPrompt(context).length);
   });
 });

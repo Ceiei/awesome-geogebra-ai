@@ -390,7 +390,10 @@ export function buildMockSolveResult(text = "") {
 }
 
 export function buildMockCommandsFromSteps({ problemSummary = "", mathType = "geometry", constructionSteps = [], viewport } = {}) {
-  const stepText = [problemSummary, ...constructionSteps].join(" ");
+  const stepText = [
+    problemSummary,
+    ...constructionSteps.map((step) => typeof step === "string" ? step : step?.text || "")
+  ].filter(Boolean).join(" ");
   const templateResult = findTeachingTemplate(stepText);
   if (templateResult) {
     return {

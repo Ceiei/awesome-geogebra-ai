@@ -145,23 +145,97 @@ function quadraticIntervalTemplate({ expression, sourceText }) {
   }, "二次函数区间最值");
 }
 
-function cubeSectionTemplate({ sideLength, sourceText }) {
+function cubeSectionTemplate({ sideLength, sourceText, orientation = "horizontal" }) {
   const side = Number(sideLength);
-  const minHeight = Number((side * 0.1).toFixed(2));
-  const maxHeight = Number((side * 0.9).toFixed(2));
+  const isVertical = orientation === "vertical";
+  const isArbitrary = orientation === "arbitrary";
+  const parameterName = isVertical ? "s" : "h";
+  const sectionName = isArbitrary ? "任意截面" : (isVertical ? "垂直截面" : "水平截面");
+  const sectionSteps = isArbitrary
+    ? [
+      "创建“截面方位角”“截面倾角”和“截面位置”三个控制量，分别改变平面的朝向与相对正方体中心的偏移。",
+      "由法向量和中心偏移定义任意截平面 cutPlane；它既不固定平行于底面，也不固定垂直于底面。",
+      "构造正方体计算对象 cubeSolid，使用 Intersect(cutPlane,cubeSolid) 直接生成动态截交多边形 cutSection。"
+    ]
+    : isVertical
+    ? [
+      "创建滑动条 s，表示垂直截面 x=s 沿 x 方向的位置；该平面始终垂直于底面 z=0。",
+      "在 AB、DC、D1C1、A1B1 四条棱上分别取 P1、P2、P3、P4。"
+    ]
+    : [
+      "创建滑动条 h，表示水平截面 z=h 在 z 方向的高度。",
+      "在 AA1、BB1、CC1、DD1 四条竖直棱上分别取 P1、P2、P3、P4。"
+    ];
+  const parameterCommands = isArbitrary
+    ? [
+      "azimuth=Slider(0,360,1,1,180,false,true,false,false)",
+      "tilt=Slider(1,179,1,1,180,false,true,false,false)",
+      "planeShift=Slider(-1.8,1.8,0.1,1,180,false,true,false,false)",
+      "nx=cos(azimuth°)*sin(tilt°)",
+      "ny=sin(azimuth°)*sin(tilt°)",
+      "nz=cos(tilt°)",
+      `cutPlane: nx*(x-${side / 2})+ny*(y-${side / 2})+nz*(z-${side / 2})=planeShift`
+    ]
+    : isVertical
+    ? [
+      `s=Slider(0,${side},0.1,1,180,false,true,false,false)`
+    ]
+    : [
+      `h=Slider(0,${side},0.1,1,180,false,true,false,false)`
+    ];
+  const sectionGeometryCommands = isArbitrary
+    ? [
+      "baseFace=Polygon(A,B,C,D)",
+      "cubeSolid=Prism(baseFace,A1)",
+      "cutSection=Intersect(cutPlane,cubeSolid)",
+      "SetVisible(baseFace,false)",
+      "SetVisible(cubeSolid,false)",
+      "SetVisible(cutPlane,false)"
+    ]
+    : isVertical
+    ? [
+      "P1=(s,0,0)",
+      `P2=(s,${side},0)`,
+      `P3=(s,${side},${side})`,
+      `P4=(s,0,${side})`,
+      "cutSection=Polygon(P1,P2,P3,P4)"
+    ]
+    : [
+      "P1=(0,0,h)",
+      `P2=(${side},0,h)`,
+      `P3=(${side},${side},h)`,
+      `P4=(0,${side},h)`,
+      "cutSection=Polygon(P1,P2,P3,P4)"
+    ];
+  const labelCommands = isArbitrary ? [] : [
+    "ShowLabel(P1,true)",
+    "ShowLabel(P2,true)",
+    "ShowLabel(P3,true)",
+    "ShowLabel(P4,true)"
+  ];
+  const dynamicControls = isArbitrary
+    ? [
+      { name: "azimuth", label: "截面方位角", description: "截面法向方位角", min: 0, max: 360, step: 1, defaultValue: 45, affectedObjects: ["cutPlane", "cutSection"] },
+      { name: "tilt", label: "截面倾角", description: "截面法向倾角", min: 1, max: 179, step: 1, defaultValue: 55, affectedObjects: ["cutPlane", "cutSection"] },
+      { name: "planeShift", label: "截面位置", description: "截面相对中心的位置", min: -1.8, max: 1.8, step: 0.1, defaultValue: 0, affectedObjects: ["cutPlane", "cutSection"] }
+    ]
+    : [
+      { name: parameterName, label: isVertical ? "垂直截面位置" : "截面高度", description: isVertical ? "垂直截面位置" : "截面高度", min: 0, max: side, step: 0.1, defaultValue: side / 2, affectedObjects: ["P1", "P2", "P3", "P4", "cutSection"] }
+    ];
   return withTemplateWarning({
     recognizedProblemText: sourceText,
-    problemSummary: `用滑动条控制棱长为 ${side} 的正方体内水平截面的高度，观察截面形状随高度变化。`,
+    problemSummary: `用滑动条控制棱长为 ${side} 的正方体内${sectionName}的位置，观察截面形状变化。`,
     mathType: "solid_geometry",
     constructionSteps: [
-      "构造正方体 ABCD-A1B1C1D1。",
-      "创建滑动条 h，表示水平截面在 z 方向的高度。",
-      "在四条竖直棱上取 P、Q、R、U 四点。",
-      "构造截面 PQRU，并用低透明度填充突出显示。",
+      `构造棱长为 ${side} 的正方体 ABCD-A1B1C1D1。`,
+      ...sectionSteps,
+      isArbitrary
+        ? "显示动态截交多边形 cutSection，并用低透明度填充；其边数随平面位置和方向自动变化。"
+        : "构造截面 P1P2P3P4，并用低透明度填充突出显示。",
       "保留正方体棱线和截面，方便旋转观察。"
     ],
     ggbCommands: [
-      `h=Slider(${minHeight},${maxHeight},0.1,1,180,false,true,false,false)`,
+      ...parameterCommands,
       "A=(0,0,0)",
       `B=(${side},0,0)`,
       `C=(${side},${side},0)`,
@@ -182,29 +256,27 @@ function cubeSectionTemplate({ sideLength, sourceText }) {
       "edgeBB1=Segment(B,B1)",
       "edgeCC1=Segment(C,C1)",
       "edgeDD1=Segment(D,D1)",
-      "P=(0,0,h)",
-      `Q=(${side},0,h)`,
-      `R=(${side},${side},h)`,
-      `U=(0,${side},h)`,
-      "section=Polygon(P,Q,R,U)",
-      "SetFilling(section,0.18)",
-      "SetColor(section,96,165,250)",
-      "SetLineThickness(section,4)",
-      "ShowLabel(P,true)",
-      "ShowLabel(Q,true)",
-      "ShowLabel(R,true)",
-      "ShowLabel(U,true)"
+      ...sectionGeometryCommands,
+      "SetFilling(cutSection,0.18)",
+      "SetColor(cutSection,96,165,250)",
+      "SetLineThickness(cutSection,4)",
+      ...labelCommands
     ],
-    dynamicControls: [
-      { name: "h", label: "截面高度", description: "截面高度", min: minHeight, max: maxHeight, step: 0.1, defaultValue: side / 2, affectedObjects: ["P", "Q", "R", "U", "section"] }
+    objectManifest: [
+      { label: "edgeCD", teacherName: "隐藏棱 CD", objectType: "Segment", role: "helper" },
+      { label: "edgeDA", teacherName: "隐藏棱 DA", objectType: "Segment", role: "helper" },
+      { label: "edgeDD1", teacherName: "隐藏棱 DD1", objectType: "Segment", role: "helper" },
+      { label: "baseFace", teacherName: "底面计算对象", objectType: "Polygon", role: "hidden", visible: false },
+      { label: "cubeSolid", teacherName: "正方体计算对象", objectType: "Polyhedron", role: "hidden", visible: false },
+      { label: "cutPlane", teacherName: "截平面计算对象", objectType: "Plane", role: "hidden", visible: false },
+      { label: "cutSection", teacherName: isArbitrary ? "动态截交多边形" : "截面 P1P2P3P4", objectType: "Polygon", role: "region" }
     ],
-    dynamicCandidates: [
-      { name: "h", label: "截面高度", description: "控制水平截面高度", min: minHeight, max: maxHeight, step: 0.1, defaultValue: side / 2, affectedObjects: ["section"], enabled: true }
-    ],
+    dynamicControls,
+    dynamicCandidates: dynamicControls.map((control) => ({ ...control, enabled: true, reason: `控制${sectionName}变化` })),
     viewport: { xmin: -1, xmax: side + 1, ymin: -1, ymax: side + 1 },
     warnings: [],
-    generationMeta: { templateId: "cube-horizontal-section-v3" }
-  }, "正方体水平截面");
+    generationMeta: { templateId: `cube-${orientation}-section-v5`, sectionOrientation: orientation }
+  }, `正方体${sectionName}`);
 }
 
 function lineDistanceDihedralTemplate({ distanceC, distanceD, angle, sourceText }) {
@@ -262,10 +334,27 @@ function parseEllipseParameters(text) {
 
 function parseCubeSideLength(text) {
   const normalized = String(text || "").replace(/\s+/g, "");
-  const match = normalized.match(/(?:棱长|边长)(?:为|是|=)?(\d+(?:\.\d+)?)/);
+  const match = normalized.match(/(?:棱长|边长)(?:始终)?(?:为|是|=)?(\d+(?:\.\d+)?)/)
+    || normalized.match(/(?:范围|区间)(?:为|是|=)?[\[【(（]0[,，](\d+(?:\.\d+)?)[\]】)）]/)
+    || normalized.match(/B[=(（]?\((\d+(?:\.\d+)?)[,，]0[,，]0\)/i);
   if (!match) return null;
   const sideLength = Number(match[1]);
-  return sideLength > 0 ? { sideLength, sourceText: String(text).trim() } : null;
+  if (!(sideLength > 0)) return null;
+  const horizontalIndex = [normalized.indexOf("水平平面"), normalized.indexOf("水平截")]
+    .filter((index) => index >= 0)
+    .sort((a, b) => a - b)[0] ?? Number.POSITIVE_INFINITY;
+  const verticalIndex = [normalized.indexOf("垂直平面"), normalized.indexOf("垂直截")]
+    .filter((index) => index >= 0)
+    .sort((a, b) => a - b)[0] ?? Number.POSITIVE_INFINITY;
+  let orientation = "arbitrary";
+  if (Number.isFinite(verticalIndex) || Number.isFinite(horizontalIndex)) {
+    orientation = verticalIndex < horizontalIndex ? "vertical" : "horizontal";
+  } else if (/z[=＝][a-z]/i.test(normalized)) {
+    orientation = "horizontal";
+  } else if (/[xy][=＝][a-z]/i.test(normalized)) {
+    orientation = "vertical";
+  }
+  return { sideLength, sourceText: String(text).trim(), orientation };
 }
 
 function parseLineDistanceDihedral(text) {

@@ -2,6 +2,7 @@ import express from "express";
 import multer from "multer";
 import { buildMockCommandsFromSteps, buildMockSolveResult } from "./mockAi.js";
 import {
+  analyzeProblemWithOpenAI,
   generateCommandsWithOpenAI,
   recognizeProblemWithOpenAI,
   reviewConstructionSemanticsWithOpenAI,
@@ -12,6 +13,12 @@ import { normalizeSolveResult } from "./solveSchema.js";
 import { findTeachingTemplate } from "./teachingTemplates.js";
 import { applyRepairWithinLock, createRepairLock, validateSemanticContract } from "../shared/semanticValidator.js";
 import { SOLVE_SCHEMA_VERSION, VALIDATOR_VERSION } from "../shared/solveResultV2.js";
+import {
+  buildSemanticConstruction,
+  compileConstructionGraph,
+  createMathematicalModel,
+  diffMathematicalModels
+} from "../shared/constructionSemantics.js";
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const allowedImageTypes = new Set(["image/png", "image/jpeg", "image/webp"]);
@@ -20,6 +27,22 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_IMAGE_BYTES }
 });
+
+function normalizeMathType(value) {
+  return ["geometry", "function", "analytic_geometry", "solid_geometry"].includes(value)
+    ? value
+    : "geometry";
+}
+
+function normalizeConstructionSteps(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map((step, index) => ({
+    id: String(typeof step === "string" ? `step-${index + 1}` : step?.id || `step-${index + 1}`),
+    text: String(typeof step === "string" ? step : step?.text || "").trim(),
+    objectLabels: Array.isArray(step?.objectLabels) ? step.objectLabels.map(String) : [],
+    stage: Math.max(1, Number(step?.stage) || index + 1)
+  })).filter((step) => step.text);
+}
 
 export function createApp() {
   const app = express();
@@ -65,6 +88,7 @@ export function createApp() {
     try {
       const text = String(req.body?.text ?? "");
       const image = req.file;
+      const forceReparse = String(req.body?.forceReparse || "") === "1";
       const { apiKey, baseUrl, model } = readProviderHeaders(req);
 
       if (!text.trim() && !image) {
@@ -75,7 +99,7 @@ export function createApp() {
         return res.status(415).json({ error: "仅支持 PNG、JPEG 和 WebP 图片。" });
       }
 
-      const templateResult = image ? null : findTeachingTemplate(text);
+      const templateResult = image || forceReparse ? null : findTeachingTemplate(text);
       const rawResult = templateResult || (process.env.USE_MOCK_AI === "1"
         ? buildMockSolveResult(text)
         : await solveWithOpenAI({ text, image, apiKey, baseUrl, model }));
@@ -103,61 +127,90 @@ export function createApp() {
     }
   });
 
+  app.post("/api/plan", upload.single("image"), async (req, res, next) => {
+    try {
+      const text = String(req.body?.text ?? "");
+      const image = req.file;
+      if (!text.trim() && !image) {
+        return res.status(400).json({ error: "请输入题目文字或上传题目图片。" });
+      }
+      if (image && !allowedImageTypes.has(image.mimetype)) {
+        return res.status(415).json({ error: "仅支持 PNG、JPEG 和 WebP 图片。" });
+      }
+      const deterministicPlan = image ? null : findTeachingTemplate(text);
+      const raw = deterministicPlan || (process.env.USE_MOCK_AI === "1"
+        ? buildMockSolveResult(text)
+        : await analyzeProblemWithOpenAI({ text, image, ...readProviderHeaders(req) }));
+      const constructionSteps = normalizeConstructionSteps(raw?.constructionSteps);
+      if (!constructionSteps.length) {
+        return res.status(422).json({ error: "模型没有生成有效构造步骤，请重新解析。" });
+      }
+      const recognizedProblemText = String(raw?.recognizedProblemText || text).trim();
+      const mathType = normalizeMathType(raw?.mathType);
+      const mathematicalModel = createMathematicalModel({
+        sourceText: recognizedProblemText,
+        constructionSteps,
+        commands: raw?.ggbCommands,
+        mathType
+      });
+      const constructionModel = createMathematicalModel({ constructionSteps, mathType });
+      return res.json({
+        recognizedProblemText,
+        mathType,
+        constructionSteps,
+        mathematicalModel,
+        constructionModel,
+        traceId: req.traceId
+      });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
   app.post("/api/commands", async (req, res, next) => {
     try {
       const body = req.body && typeof req.body === "object" ? req.body : {};
-      const constructionSteps = Array.isArray(body.constructionSteps)
-        ? body.constructionSteps.map((step, index) => (
-          typeof step === "string"
-            ? step.trim()
-            : {
-              id: String(step?.id || `step-${index + 1}`),
-              text: String(step?.text || "").trim(),
-              objectLabels: Array.isArray(step?.objectLabels) ? step.objectLabels.map(String) : [],
-              stage: Math.max(1, Number(step?.stage) || index + 1)
-            }
-        )).filter((step) => typeof step === "string" ? Boolean(step) : Boolean(step.text))
-        : [];
+      const constructionSteps = normalizeConstructionSteps(body.constructionSteps);
       const { apiKey, baseUrl, model } = readProviderHeaders(req);
 
       if (!constructionSteps.length) {
         return res.status(400).json({ error: "请至少保留一条构造步骤。" });
       }
 
-      const commandRequest = {
-        problemSummary: String(body.problemSummary ?? "").trim(),
-        mathType: String(body.mathType ?? "geometry").trim(),
-        problemContract: body.problemContract && typeof body.problemContract === "object" ? body.problemContract : {},
-        constructionSteps,
-        viewport: body.viewport && typeof body.viewport === "object" ? body.viewport : undefined,
-        apiKey,
-        baseUrl,
-        model
-      };
+      const stepSource = constructionSteps.map((step) => step.text).join("\n");
+      const commandRequest = { constructionSteps, apiKey, baseUrl, model };
+      const deterministicResult = findTeachingTemplate(stepSource);
 
-      const rawResult = process.env.USE_MOCK_AI === "1"
+      const rawResult = deterministicResult || (process.env.USE_MOCK_AI === "1"
         ? buildMockCommandsFromSteps(commandRequest)
-        : await generateCommandsWithOpenAI(commandRequest);
+        : await generateCommandsWithOpenAI(commandRequest));
 
       const generated = normalizeSolveResult({
         ...rawResult,
-        problemSummary: rawResult?.problemSummary || commandRequest.problemSummary,
-        mathType: commandRequest.mathType,
-        problemContract: commandRequest.problemContract,
-        constructionSteps: rawResult?.constructionSteps?.length ? rawResult.constructionSteps : constructionSteps,
-        viewport: rawResult?.viewport || commandRequest.viewport
-      }, { sourceText: commandRequest.problemContract?.originalText || commandRequest.problemSummary, model });
-      const result = applyRepairWithinLock({
-        ...generated,
-        problemSummary: commandRequest.problemSummary,
-        mathType: commandRequest.mathType,
-        problemContract: commandRequest.problemContract
-      }, generated, {
-        problemSummary: commandRequest.problemSummary,
-        mathType: commandRequest.mathType,
-        problemContract: commandRequest.problemContract,
-        recognizedProblemText: commandRequest.problemContract?.originalText || generated.recognizedProblemText
+        problemSummary: "",
+        mathType: normalizeMathType(rawResult?.mathType),
+        constructionSteps,
+        viewport: rawResult?.viewport
+      }, { sourceText: stepSource, model });
+      const semantics = buildSemanticConstruction({
+        constructionSteps,
+        commands: generated.ggbCommands,
+        mathType: generated.mathType
       });
+      const compilationReport = compileConstructionGraph(semantics.constructionGraph);
+      const result = {
+        ...generated,
+        constructionSteps,
+        ggbCommands: compilationReport.ok ? compilationReport.commands : generated.ggbCommands,
+        mathematicalModel: semantics.mathematicalModel,
+        constructionModel: semantics.mathematicalModel,
+        constructionGraph: semantics.constructionGraph,
+        semanticDiff: diffMathematicalModels(body.previousConstructionModel, semantics.mathematicalModel),
+        compilationReport: {
+          ok: compilationReport.ok,
+          errors: compilationReport.errors
+        }
+      };
 
       if (!result.ggbCommands.length && !result.followupQuestion) {
         return res.status(422).json({

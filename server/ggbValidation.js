@@ -35,6 +35,7 @@ const allowedCommandNames = new Set([
   "Distance",
   "Function",
   "Intersect",
+  "IntersectPath",
   "Line",
   "Locus",
   "Midpoint",

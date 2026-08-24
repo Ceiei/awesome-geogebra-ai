@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { requestProblemSolution } from "./problemSolver.js";
+import { requestProblemPlan, requestProblemSolution } from "./problemSolver.js";
 
 describe("problem solution request", () => {
   it("handles image recognition and solving in one model request", async () => {
@@ -37,6 +37,23 @@ describe("problem solution request", () => {
     await requestProblemSolution({ text: "构造点 A", request });
     expect(request).toHaveBeenCalledTimes(1);
     expect(request.mock.calls[0][0]).toBe("/api/solve");
+  });
+
+  it("marks an explicit reparse so the server bypasses templates and caches", async () => {
+    const request = vi.fn(async () => ({ schemaVersion: 2, ggbCommands: ["A=(0,0)"] }));
+    await requestProblemSolution({ text: "重新分析这道题", forceReparse: true, request });
+    expect(request.mock.calls[0][1].body.get("forceReparse")).toBe("1");
+  });
+
+  it("requests construction steps without requesting commands", async () => {
+    const request = vi.fn(async () => ({
+      recognizedProblemText: "构造三角形 ABC",
+      mathType: "geometry",
+      constructionSteps: [{ id: "step-1", text: "放置 A、B、C。", objectLabels: ["A", "B", "C"], stage: 1 }]
+    }));
+    const result = await requestProblemPlan({ text: "构造三角形 ABC", request });
+    expect(request.mock.calls[0][0]).toBe("/api/plan");
+    expect(result.payload).not.toHaveProperty("ggbCommands");
   });
 
   it("sends supplied OCR text together with the image as a correction hint", async () => {

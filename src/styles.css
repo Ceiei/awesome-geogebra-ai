@@ -871,7 +871,8 @@ pre {
   line-height: 1.4;
 }
 
-.error-box.compact {
+.error-box.compact,
+.success-box.compact {
   align-items: center;
   padding: 8px 10px;
   font-size: 12px;
@@ -886,6 +887,28 @@ pre {
   font-size: 12px;
   line-height: 1.5;
   overflow: auto;
+}
+
+.simplified-workflow .single-action .primary-button,
+.simple-plan-content > .primary-button {
+  width: 100%;
+}
+
+.simple-plan-content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  padding: 16px;
+}
+
+.steps-editor.simplified {
+  flex: 1;
+  min-height: 220px;
+  max-height: none;
+  margin: 0;
+  resize: vertical;
 }
 
 .steps-actions {
@@ -915,6 +938,22 @@ pre {
   border: 1px solid #abefc6;
   background: #ecfdf3;
   color: var(--success);
+}
+
+.semantic-change-box {
+  display: grid;
+  gap: 5px;
+  border: 1px solid #bfd2f8;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #f3f7ff;
+  color: #344054;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.semantic-change-box strong {
+  color: #1849a9;
 }
 
 .rejected-block p {

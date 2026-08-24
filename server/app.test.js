@@ -279,19 +279,132 @@ describe("solve API", () => {
     expect(response.body.mathType).toBe("solid_geometry");
     expect(response.body.rejectedCommands).toEqual([]);
     expect(response.body.dynamicControls).toEqual([
-      { name: "h", description: "截面高度", min: 0.4, max: 3.6, step: 0.1 }
+      { name: "h", description: "截面高度", min: 0, max: 4, step: 0.1 }
     ]);
     expect(response.body.dynamicCandidates[0]).toMatchObject({
       name: "h",
       label: "截面高度",
-      min: 0.4,
-      max: 3.6,
+      min: 0,
+      max: 4,
       enabled: true
     });
     expect(response.body.ggbCommands).toEqual(expect.arrayContaining([
-      "h=Slider(0.4,3.6,0.1,1,180,false,true,false,false)",
-      "P=(0,0,h)",
-      "section=Polygon(P,Q,R,U)"
+      "h=Slider(0,4,0.1,1,180,false,true,false,false)",
+      "P1=(0,0,h)",
+      "cutSection=Polygon(P1,P2,P3,P4)"
+    ]));
+  });
+
+  it("compiles teacher-edited cube section steps without calling the model", async () => {
+    delete process.env.USE_MOCK_AI;
+    const constructionSteps = [
+      "绘制正方体 ABCD-A₁B₁C₁D₁，A(0,0,0)，B(4,0,0)，C(4,4,0)，D(0,4,0)，A₁(0,0,4)，B₁(4,0,4)，C₁(4,4,4)，D₁(0,4,4)。",
+      "创建滑动条 h，范围 [0,4]，表示截平面 z=h 的高度。",
+      "求截平面与 AA₁、BB₁、CC₁、DD₁ 的交点。",
+      "连接交点形成截面正方形，并以多边形形式高亮，验证边长为 4。"
+    ];
+    const response = await request(createApp())
+      .post("/api/commands")
+      .send({ constructionSteps });
+
+    expect(response.status).toBe(200);
+    expect(response.body.mathType).toBe("solid_geometry");
+    expect(response.body.rejectedCommands).toEqual([]);
+    expect(response.body.ggbCommands).toEqual(expect.arrayContaining([
+      "A=(0,0,0)",
+      "C1=(4,4,4)",
+      "edgeAA1=Segment(A,A1)",
+      "cutSection=Polygon(P1,P2,P3,P4)"
+    ]));
+  });
+
+  it("keeps horizontal and vertical cube sections mathematically distinct", async () => {
+    delete process.env.USE_MOCK_AI;
+    const horizontalProblem = "棱长为 4 的正方体 ABCD-A₁B₁C₁D₁ 被水平平面截割，观察截面随高度变化。";
+    const verticalProblem = "棱长为 4 的正方体 ABCD-A₁B₁C₁D₁ 被垂直平面截割，观察截面随高度变化。";
+
+    const horizontalPlan = await request(createApp()).post("/api/plan").field("text", horizontalProblem);
+    const verticalPlan = await request(createApp()).post("/api/plan").field("text", verticalProblem);
+    expect(horizontalPlan.status).toBe(200);
+    expect(verticalPlan.status).toBe(200);
+    expect(horizontalPlan.body.constructionSteps.map((step) => step.text).join(" ")).toContain("z=h");
+    expect(verticalPlan.body.constructionSteps.map((step) => step.text).join(" ")).toContain("x=s");
+    expect(verticalPlan.body.constructionSteps.map((step) => step.text).join(" ")).not.toContain("z=h");
+
+    const horizontalCommands = await request(createApp())
+      .post("/api/commands")
+      .send({ constructionSteps: horizontalPlan.body.constructionSteps });
+    const verticalCommands = await request(createApp())
+      .post("/api/commands")
+      .send({ constructionSteps: verticalPlan.body.constructionSteps });
+    expect(horizontalCommands.body.ggbCommands).toEqual(expect.arrayContaining([
+      "h=Slider(0,4,0.1,1,180,false,true,false,false)",
+      "P1=(0,0,h)",
+      "P3=(4,4,h)"
+    ]));
+    expect(verticalCommands.body.ggbCommands).toEqual(expect.arrayContaining([
+      "s=Slider(0,4,0.1,1,180,false,true,false,false)",
+      "P1=(s,0,0)",
+      "P3=(s,4,4)"
+    ]));
+    expect(verticalCommands.body.ggbCommands).not.toContain("P1=(0,0,h)");
+  });
+
+  it("uses orientation and position controls when the cube section plane is arbitrary", async () => {
+    delete process.env.USE_MOCK_AI;
+    const problem = "棱长为 4 的正方体 ABCD-A₁B₁C₁D₁ 被平面截割，观察截面形状变化。";
+    const plan = await request(createApp()).post("/api/plan").field("text", problem);
+
+    expect(plan.status).toBe(200);
+    const stepText = plan.body.constructionSteps.map((step) => step.text).join(" ");
+    expect(stepText).toContain("任意截平面");
+    expect(stepText).toContain("截面方位角");
+    expect(stepText).not.toContain("水平截面 z=h");
+    expect(stepText).not.toContain("垂直截面 x=s");
+
+    const commands = await request(createApp())
+      .post("/api/commands")
+      .send({ constructionSteps: plan.body.constructionSteps });
+    expect(commands.status).toBe(200);
+    expect(commands.body.generationMeta).toMatchObject({ sectionOrientation: "arbitrary" });
+    expect(commands.body.ggbCommands).toEqual(expect.arrayContaining([
+      "azimuth=Slider(0,360,1,1,180,false,true,false,false)",
+      "tilt=Slider(1,179,1,1,180,false,true,false,false)",
+      "baseFace=Polygon(A,B,C,D)",
+      "cubeSolid=Prism(baseFace,A1)",
+      "cutSection=Intersect(cutPlane,cubeSolid)"
+    ]));
+    expect(commands.body.ggbCommands).not.toContain("P1=(0,0,h)");
+    expect(commands.body.dynamicControls.map((control) => control.name)).toEqual(["azimuth", "tilt", "planeShift"]);
+  });
+
+  it("returns a domain-independent semantic model and reports edited construction meaning", async () => {
+    delete process.env.USE_MOCK_AI;
+    const horizontalProblem = "棱长为 4 的正方体被水平平面截割，观察截面变化。";
+    const horizontalPlan = await request(createApp()).post("/api/plan").field("text", horizontalProblem);
+
+    expect(horizontalPlan.status).toBe(200);
+    expect(horizontalPlan.body.mathematicalModel).toMatchObject({ version: 1, mathType: "solid_geometry" });
+    expect(horizontalPlan.body.constructionModel.facts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ category: "orientation", value: "horizontal" })
+    ]));
+
+    const editedSteps = horizontalPlan.body.constructionSteps.map((step, index) => (
+      index === 1
+        ? { ...step, text: "创建方位角、倾角和位置参数，构造任意截平面。" }
+        : step
+    ));
+    const commands = await request(createApp()).post("/api/commands").send({
+      constructionSteps: editedSteps,
+      previousConstructionModel: horizontalPlan.body.constructionModel
+    });
+
+    expect(commands.status).toBe(200);
+    expect(commands.body.compilationReport).toEqual({ ok: true, errors: [] });
+    expect(commands.body.constructionGraph.nodes.length).toBe(commands.body.ggbCommands.length);
+    expect(commands.body.semanticDiff.changed).toBe(true);
+    expect(commands.body.semanticDiff.changes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ category: "orientation", before: ["horizontal"], after: ["arbitrary"] })
     ]));
   });
 
@@ -350,6 +463,44 @@ describe("solve API", () => {
     expect(response.body.error).toContain("构造步骤");
   });
 
+  it("returns only ordered construction steps from the plan endpoint", async () => {
+    process.env.USE_MOCK_AI = "1";
+    const response = await request(createApp())
+      .post("/api/plan")
+      .field("text", "构造三角形 ABC，并作角平分线。");
+
+    expect(response.status).toBe(200);
+    expect(response.body.constructionSteps.length).toBeGreaterThan(0);
+    expect(response.body).not.toHaveProperty("ggbCommands");
+    expect(response.body).not.toHaveProperty("teachingNotes");
+  });
+
+  it("generates commands from steps even when unrelated problem fields are supplied", async () => {
+    process.env.USE_MOCK_AI = "1";
+    const response = await request(createApp())
+      .post("/api/commands")
+      .send({
+        problemSummary: "正方体立体几何，这个字段必须被忽略",
+        mathType: "solid_geometry",
+        constructionSteps: ["放置 A、B、C 三点。", "连接三点形成三角形。"]
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.mathType).toBe("geometry");
+    expect(response.body.ggbCommands).toContain("region1=Polygon(A,B,C)");
+  });
+
+  it("bypasses a matching built-in template for an explicit reparse", async () => {
+    process.env.USE_MOCK_AI = "1";
+    const response = await request(createApp())
+      .post("/api/solve")
+      .field("text", "已知椭圆 x²/9+y²/4=1，点 P 在椭圆上运动，观察三角形面积变化。")
+      .field("forceReparse", "1");
+
+    expect(response.status).toBe(200);
+    expect(response.body.generationMeta?.templateId).not.toBe("ellipse-moving-point-area-v3");
+  });
+
   it("performs a constrained semantic review for complex constructions", async () => {
     process.env.USE_MOCK_AI = "1";
     const response = await request(createApp())
@@ -388,6 +539,23 @@ describe("solve API", () => {
     expect(response.status).toBe(200);
     expect(response.body.constructionSteps.map((step) => step.text)).toEqual(["放置 A、B、C 三点。", "连接三条边。"]);
     expect(response.body.ggbCommands).toContain("region1=Polygon(A,B,C)");
+  });
+
+  it("keeps the teacher-edited construction steps in regenerated results", async () => {
+    process.env.USE_MOCK_AI = "1";
+    const editedSteps = ["放置 A、B、C 三点。", "新增中点 M 并连接 AM。"];
+    const response = await request(createApp())
+      .post("/api/commands")
+      .send({
+        problemSummary: "构造三角形并添加中线",
+        mathType: "geometry",
+        constructionSteps: editedSteps,
+        previousConstructionSteps: ["放置 A、B、C 三点。", "连接三条边。"],
+        previousCommands: ["A=(0,0)"]
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.constructionSteps.map((step) => step.text)).toEqual(editedSteps);
   });
 
   it("regenerates dynamic commands when edited steps describe a moving point area", async () => {

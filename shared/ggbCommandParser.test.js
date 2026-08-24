@@ -16,6 +16,16 @@ describe("GeoGebra command parser", () => {
     });
   });
 
+  it("treats products of function calls as value expressions instead of malformed commands", () => {
+    expect(parseGgbCommand("nx=cos(azimuth°)*sin(tilt°)")).toMatchObject({
+      kind: "value",
+      label: "nx",
+      commandName: "Value",
+      dependencies: ["azimuth", "tilt"],
+      validSyntax: true
+    });
+  });
+
   it("splits anonymous style targets into named objects", () => {
     expect(normalizeAnonymousStyleTargets([
       "P=(0,2)",

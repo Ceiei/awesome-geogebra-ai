@@ -2,8 +2,8 @@ import "dotenv/config";
 import OpenAI from "openai";
 import { lookup } from "node:dns/promises";
 import { BlockList, isIP } from "node:net";
-import { buildSystemPrompt } from "./promptProfiles.js";
-import { commandJsonSchema, solveJsonSchema } from "./solveSchema.js";
+import { buildCommandSystemPrompt, buildPlanSystemPrompt, buildSystemPrompt } from "./promptProfiles.js";
+import { commandJsonSchema, planJsonSchema, solveJsonSchema } from "./solveSchema.js";
 import { findProviderByBaseUrl, getAllowedProviderHosts, providerPresets } from "../shared/providerPresets.js";
 
 export { providerPresets };
@@ -49,23 +49,34 @@ function buildJsonInstruction() {
   ].join("\n");
 }
 
-function buildCommandUserText({ problemSummary, mathType, problemContract, constructionSteps, viewport, repairContext }) {
+function buildCommandJsonInstruction() {
   return [
-    "请根据用户修订后的构造步骤，重新生成完整 GeoGebra 命令。",
+    "只返回一个有效的 json 对象（JSON），包含以下字段：mathType、ggbCommands、dynamicControls、viewport。",
+    "不要返回题目摘要、题目合同、识别文字、构造步骤、对象清单、动态候选、警告或教学说明。",
+    "ggbCommands 必须是完整、可独立重建图形的 GeoGebra 命令字符串数组。"
+  ].join("\n");
+}
+
+function getResponsesPerformanceOptions(model, maxOutputTokens) {
+  const supportsReasoningControl = /^(?:gpt-5|o[134](?:-|$))/i.test(String(model || ""));
+  return {
+    max_output_tokens: maxOutputTokens,
+    ...(supportsReasoningControl ? { reasoning: { effort: "low" } } : {})
+  };
+}
+
+function buildCommandUserText({ constructionSteps, repairContext }) {
+  return [
+    "请只根据以下构造步骤生成完整 GeoGebra 命令，不得使用题目原文或其他历史上下文。",
     "如果修订步骤体现可变点、任意点、参数、面积变化、斜率变化、轨迹或切割过程，应生成 GeoGebra 原生 Slider 滑动条和依赖对象；即使步骤没有明确说“动态演示”，也要为自然可变对象补滑动条。",
-    "不要重新解释或修改题目，不要省略已需要的基础对象定义。",
-    "problemContract 是不可变合同。返回内容中的 mathType、recognizedProblemText、problemSummary 和 problemContract 必须与输入一致。",
+    "不要重新解释题目，不要省略步骤中需要的基础对象定义。",
     "如果步骤中提到点、线段、平面、函数、角度、距离或辅助对象，必须先定义对象再使用。",
     "",
-    `题目摘要：${problemSummary || "未提供"}`,
-    `数学类型：${mathType || "geometry"}`,
-    `不可变题目合同：${JSON.stringify(problemContract || {})}`,
-    `建议视野：${JSON.stringify(viewport || {})}`,
-    "用户修订后的构造步骤：",
+    "用户确认后的构造步骤：",
     constructionSteps.map((step, index) => `${index + 1}. ${typeof step === "string" ? step : step?.text || ""}`).join("\n"),
     repairContext ? `运行时修复信息：${JSON.stringify(repairContext)}` : "",
     "",
-    buildJsonInstruction()
+    buildCommandJsonInstruction()
   ].join("\n");
 }
 
@@ -115,6 +126,25 @@ function buildChatContent({ text, image }) {
     });
   }
 
+  return content;
+}
+
+function buildPlanUserContent({ text, image, chatCompatible = false }) {
+  const textBlock = text?.trim()
+    ? `请将以下题目分析为有序构造步骤，并只返回一个有效的 json 对象：\n${text.trim()}`
+    : "请读取题图、生成有序构造步骤，并只返回一个有效的 json 对象。";
+  const content = [{ type: chatCompatible ? "text" : "input_text", text: textBlock }];
+  if (image) {
+    content.push(chatCompatible
+      ? {
+        type: "image_url",
+        image_url: { url: `data:${image.mimetype};base64,${image.buffer.toString("base64")}` }
+      }
+      : {
+        type: "input_image",
+        image_url: `data:${image.mimetype};base64,${image.buffer.toString("base64")}`
+      });
+  }
   return content;
 }
 
@@ -227,16 +257,28 @@ async function solveWithResponsesApi({ client, model, text, image }) {
         type: "json_schema",
         ...solveJsonSchema
       }
-    }
+    },
+    ...getResponsesPerformanceOptions(model, 6500)
   });
 
   return response.output_text;
 }
 
-async function generateCommandsWithResponsesApi({ client, model, problemSummary, mathType, problemContract, constructionSteps, viewport, repairContext }) {
-  const systemPrompt = buildSystemPrompt({
-    text: problemSummary,
-    mathType,
+async function analyzeProblemWithResponsesApi({ client, model, text, image }) {
+  const response = await client.responses.create({
+    model,
+    input: [
+      { role: "system", content: buildPlanSystemPrompt({ text, hasImage: Boolean(image) }) },
+      { role: "user", content: buildPlanUserContent({ text, image }) }
+    ],
+    text: { format: { type: "json_schema", ...planJsonSchema } },
+    ...getResponsesPerformanceOptions(model, 1200)
+  });
+  return response.output_text;
+}
+
+async function generateCommandsWithResponsesApi({ client, model, constructionSteps, repairContext }) {
+  const systemPrompt = buildCommandSystemPrompt({
     constructionSteps
   });
   const response = await client.responses.create({
@@ -248,7 +290,7 @@ async function generateCommandsWithResponsesApi({ client, model, problemSummary,
         content: [
           {
             type: "input_text",
-            text: buildCommandUserText({ problemSummary, mathType, problemContract, constructionSteps, viewport, repairContext })
+            text: buildCommandUserText({ constructionSteps, repairContext })
           }
         ]
       }
@@ -258,7 +300,8 @@ async function generateCommandsWithResponsesApi({ client, model, problemSummary,
         type: "json_schema",
         ...commandJsonSchema
       }
-    }
+    },
+    ...getResponsesPerformanceOptions(model, 3200)
   });
 
   return response.output_text;
@@ -272,28 +315,41 @@ async function solveWithChatCompletions({ client, model, text, image }) {
       { role: "system", content: `${systemPrompt}\n${buildJsonInstruction()}` },
       { role: "user", content: buildChatContent({ text, image }) }
     ],
-    response_format: { type: "json_object" }
+    response_format: { type: "json_object" },
+    max_tokens: 6500
   });
 
   return response.choices?.[0]?.message?.content || "";
 }
 
-async function generateCommandsWithChatCompletions({ client, model, problemSummary, mathType, problemContract, constructionSteps, viewport, repairContext }) {
-  const systemPrompt = buildSystemPrompt({
-    text: problemSummary,
-    mathType,
+async function analyzeProblemWithChatCompletions({ client, model, text, image }) {
+  const response = await client.chat.completions.create({
+    model,
+    messages: [
+      { role: "system", content: buildPlanSystemPrompt({ text, hasImage: Boolean(image) }) },
+      { role: "user", content: buildPlanUserContent({ text, image, chatCompatible: true }) }
+    ],
+    response_format: { type: "json_object" },
+    max_tokens: 1200
+  });
+  return response.choices?.[0]?.message?.content || "";
+}
+
+async function generateCommandsWithChatCompletions({ client, model, constructionSteps, repairContext }) {
+  const systemPrompt = buildCommandSystemPrompt({
     constructionSteps
   });
   const response = await client.chat.completions.create({
     model,
     messages: [
-      { role: "system", content: `${systemPrompt}\n${buildJsonInstruction()}` },
+      { role: "system", content: `${systemPrompt}\n${buildCommandJsonInstruction()}` },
       {
         role: "user",
-        content: buildCommandUserText({ problemSummary, mathType, problemContract, constructionSteps, viewport, repairContext })
+        content: buildCommandUserText({ constructionSteps, repairContext })
       }
     ],
-    response_format: { type: "json_object" }
+    response_format: { type: "json_object" },
+    max_tokens: 3200
   });
 
   return response.choices?.[0]?.message?.content || "";
@@ -326,7 +382,7 @@ function createOpenAIClient({ apiKey, baseUrl, model }) {
     : undefined;
   const client = new OpenAI({
     apiKey: resolvedApiKey,
-    timeout: 150000,
+    timeout: 60000,
     maxRetries: 0,
     ...(resolvedBaseUrl ? { baseURL: resolvedBaseUrl } : {}),
     ...(customProviderFetch ? { fetch: customProviderFetch } : {})
@@ -382,12 +438,20 @@ export async function solveWithOpenAI({ text, image, apiKey, baseUrl, model }) {
   return parseModelJson(output);
 }
 
-export async function generateCommandsWithOpenAI({ problemSummary, mathType, problemContract, constructionSteps, viewport, repairContext, apiKey, baseUrl, model }) {
+export async function analyzeProblemWithOpenAI({ text, image, apiKey, baseUrl, model }) {
+  const { client, resolvedBaseUrl, resolvedModel } = createOpenAIClient({ apiKey, baseUrl, model });
+  const output = resolvedBaseUrl
+    ? await analyzeProblemWithChatCompletions({ client, model: resolvedModel, text, image })
+    : await analyzeProblemWithResponsesApi({ client, model: resolvedModel, text, image });
+  return parseModelJson(output);
+}
+
+export async function generateCommandsWithOpenAI({ constructionSteps, repairContext, apiKey, baseUrl, model }) {
   const { client, resolvedBaseUrl, resolvedModel } = createOpenAIClient({ apiKey, baseUrl, model });
 
   const output = resolvedBaseUrl
-    ? await generateCommandsWithChatCompletions({ client, model: resolvedModel, problemSummary, mathType, problemContract, constructionSteps, viewport, repairContext })
-    : await generateCommandsWithResponsesApi({ client, model: resolvedModel, problemSummary, mathType, problemContract, constructionSteps, viewport, repairContext });
+    ? await generateCommandsWithChatCompletions({ client, model: resolvedModel, constructionSteps, repairContext })
+    : await generateCommandsWithResponsesApi({ client, model: resolvedModel, constructionSteps, repairContext });
   return parseModelJson(output);
 }
 
